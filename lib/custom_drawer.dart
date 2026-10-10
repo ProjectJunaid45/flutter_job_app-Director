@@ -73,27 +73,252 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return null;
   }
 
-  // --- 1. EXCEL (.CSV) EXPORT ---
-  Future<void> _exportDateRangeExcel(
-      BuildContext context, DateTime startDate, DateTime endDate) async {
+  // --- CROSS-PLATFORM DOWNLOAD DIRECTORY HELPER (WINDOWS + MOBILE) ---
+  Future<Directory> _getTargetDirectory(bool isDownload) async {
+    if (!isDownload) {
+      return await getApplicationDocumentsDirectory();
+    }
+
+    if (Platform.isWindows) {
+      final userProfile = Platform.environment['USERPROFILE'];
+      if (userProfile != null) {
+        final winDownloads = Directory('$userProfile\\Downloads');
+        if (await winDownloads.exists()) {
+          return winDownloads;
+        }
+      }
+      final dl = await getDownloadsDirectory();
+      if (dl != null) return dl;
+    } else if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) {
+        final androidDownloads = Directory('/storage/emulated/0/Download');
+        if (await androidDownloads.exists()) {
+          return androidDownloads;
+        }
+        return ext;
+      }
+    }
+
+    final fallback = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+    return fallback;
+  }
+
+  // --- CSV GENERATOR ---
+  String _buildCsvContent(List<Map<String, dynamic>> records, DateTime startDate, DateTime endDate) {
+    final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
+    final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
+    final now = DateTime.now();
+
+    final StringBuffer csv = StringBuffer();
+    csv.writeln("NEXTGEN CONTROLS PRIVATE LIMITED");
+    csv.writeln("Simplify Your Industry");
+    csv.writeln("Statement Period: $fromStr to $toStr");
+    csv.writeln("Generated On: ${now.day}/${now.month}/${now.year}");
+    csv.writeln("Total Orders Billed / Logged: ${records.length}");
+    csv.writeln("");
+
+    csv.writeln(
+        "SR NO,START DATE,JOB NO,CLIENT NAME,PANEL / ITEM DETAILS,WORK STATUS,PROGRESS,PRICE (INR),DELIVERY DATE,PO NUMBER,INVOICE NO,VEHICLE NO");
+
+    int sr = 1;
+    for (var row in records) {
+      String clean(dynamic val) {
+        if (val == null || val.toString().trim().isEmpty) return '"-"';
+        String str = val.toString().replaceAll('"', '""');
+        return '"$str"';
+      }
+
+      final price = row['invoice_amount'] ?? row['quotation_amount'] ?? '-';
+      final progress = "${(((row['progress'] as num?)?.toDouble() ?? 0) * 100).toInt()}%";
+
+      final line = [
+        sr.toString(),
+        clean(row['start_date']),
+        clean(row['job_no']),
+        clean(row['client']),
+        clean(row['panel_type']),
+        clean(row['status']),
+        clean(progress),
+        clean(price),
+        clean(row['target_date']),
+        clean(row['po_number']),
+        clean(row['invoice_no']),
+        clean(row['dispatch_vehicle']),
+      ].join(',');
+
+      csv.writeln(line);
+      sr++;
+    }
+
+    return csv.toString();
+  }
+
+  // --- PDF GENERATOR ---
+  pw.Document _buildPdfDocument(List<Map<String, dynamic>> records, DateTime startDate, DateTime endDate) {
+    final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
+    final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
+    final now = DateTime.now();
+
+    double totalAmount = 0.0;
+    for (var r in records) {
+      final p = double.tryParse((r['invoice_amount'] ?? r['quotation_amount'] ?? '0')
+              .toString()
+              .replaceAll(',', '')) ??
+          0.0;
+      totalAmount += p;
+    }
+
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        margin: const pw.EdgeInsets.all(22),
+        build: (pw.Context pwContext) => [
+          pw.Container(
+            padding: const pw.EdgeInsets.all(12),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromHex('#0C2232'),
+              borderRadius: pw.BorderRadius.circular(6),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Row(
+                      children: [
+                        pw.Text(
+                          "NEXTGEN",
+                          style: pw.TextStyle(
+                            fontSize: 18,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                        pw.SizedBox(width: 6),
+                        pw.Text(
+                          "CONTROLS",
+                          style: pw.TextStyle(
+                            fontSize: 16,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColor.fromHex('#E88226'),
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      "PRIVATE LIMITED • Simplify Your Industry",
+                      style: const pw.TextStyle(color: PdfColors.grey400, fontSize: 8.5),
+                    ),
+                  ],
+                ),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.end,
+                  children: [
+                    pw.Text(
+                      "Statement Period: $fromStr - $toStr",
+                      style: pw.TextStyle(
+                          color: PdfColors.amber300, fontSize: 9.5, fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.Text("Generated: ${now.day}/${now.month}/${now.year}",
+                        style: const pw.TextStyle(color: PdfColors.grey400, fontSize: 8.5)),
+                    pw.Text("Total Orders: ${records.length} Panels",
+                        style: const pw.TextStyle(color: PdfColors.white, fontSize: 8.5)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 12),
+          pw.TableHelper.fromTextArray(
+            headers: [
+              'SR',
+              'DATE',
+              'JOB NO',
+              'CLIENT NAME',
+              'PANEL / ITEM DETAILS',
+              'PO NUMBER',
+              'STATUS',
+              'DELIVERY',
+              'PRICE (INR)',
+              'INVOICE NO'
+            ],
+            headerStyle: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 8.5),
+            headerDecoration: pw.BoxDecoration(color: PdfColor.fromHex('#1E3E5A')),
+            rowDecoration: const pw.BoxDecoration(
+              border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey300, width: 0.5)),
+            ),
+            cellAlignment: pw.Alignment.centerLeft,
+            cellStyle: const pw.TextStyle(fontSize: 8),
+            cellPadding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 5),
+            data: records.asMap().entries.map((entry) {
+              final idx = entry.key + 1;
+              final j = entry.value;
+              final price = j['invoice_amount'] ?? j['quotation_amount'] ?? '-';
+              return [
+                "$idx",
+                j['start_date'] ?? '-',
+                j['job_no'] ?? '-',
+                j['client'] ?? '-',
+                j['panel_type'] ?? '-',
+                j['po_number'] ?? '-',
+                j['status'] ?? '-',
+                j['target_date'] ?? '-',
+                price != '-' ? "Rs. $price" : '-',
+                j['invoice_no'] ?? '-',
+              ];
+            }).toList(),
+          ),
+          pw.SizedBox(height: 14),
+          pw.Divider(color: PdfColors.grey400),
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                "Total Statement Valuation: Rs. ${totalAmount.toStringAsFixed(0)}",
+                style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.blueGrey900),
+              ),
+              pw.Text(
+                "NEXTGEN CONTROLS PRIVATE LIMITED - Official Verified Statement",
+                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    return pdf;
+  }
+
+  // --- 1. EXCEL EXPORT & DOWNLOAD ---
+  Future<void> _handleExcelOperation(
+      BuildContext context, DateTime startDate, DateTime endDate, {required bool isDownload}) async {
     final messenger = ScaffoldMessenger.of(context);
 
     messenger.showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Row(
           children: [
-            SizedBox(
+            const SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
             ),
-            SizedBox(width: 12),
-            Text("Excel Statement generate ho raha hai...",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 12),
+            Text(isDownload ? "Downloading Excel Statement..." : "Generating Excel Statement...",
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ],
         ),
-        backgroundColor: Color(0xFF0284C7),
-        duration: Duration(milliseconds: 1400),
+        backgroundColor: const Color(0xFF0284C7),
+        duration: const Duration(milliseconds: 1400),
       ),
     );
 
@@ -113,70 +338,37 @@ class _CustomDrawerState extends State<CustomDrawer> {
       if (records.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(
-              content: Text("Is selected date range mein koi job card nahi mila!"),
+              content: Text("No job cards found for the selected date range."),
               backgroundColor: Colors.orange),
         );
         return;
       }
 
-      final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
-      final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
-      final now = DateTime.now();
-
-      final StringBuffer csv = StringBuffer();
-      csv.writeln("NEXTGEN CONTROLS PRIVATE LIMITED");
-      csv.writeln("Simplify Your Industry");
-      csv.writeln("Statement Period: $fromStr to $toStr");
-      csv.writeln("Generated On: ${now.day}/${now.month}/${now.year}");
-      csv.writeln("Total Orders Billed / Logged: ${records.length}");
-      csv.writeln("");
-
-      csv.writeln(
-          "SR NO,START DATE,JOB NO,CLIENT NAME,PANEL / ITEM DETAILS,WORK STATUS,PROGRESS,PRICE (INR),DELIVERY DATE,PO NUMBER,INVOICE NO,VEHICLE NO");
-
-      int sr = 1;
-      for (var row in records) {
-        String clean(dynamic val) {
-          if (val == null || val.toString().trim().isEmpty) return '"-"';
-          String str = val.toString().replaceAll('"', '""');
-          return '"$str"';
-        }
-
-        final price = row['invoice_amount'] ?? row['quotation_amount'] ?? '-';
-        final progress =
-            "${(((row['progress'] as num?)?.toDouble() ?? 0) * 100).toInt()}%";
-
-        final line = [
-          sr.toString(),
-          clean(row['start_date']),
-          clean(row['job_no']),
-          clean(row['client']),
-          clean(row['panel_type']),
-          clean(row['status']),
-          clean(progress),
-          clean(price),
-          clean(row['target_date']),
-          clean(row['po_number']),
-          clean(row['invoice_no']),
-          clean(row['dispatch_vehicle']),
-        ].join(',');
-
-        csv.writeln(line);
-        sr++;
-      }
-
-      final directory = await getApplicationDocumentsDirectory();
+      final csvString = _buildCsvContent(records, startDate, endDate);
+      final directory = await _getTargetDirectory(isDownload);
       final fileName =
           "NextGen_Statement_${startDate.day}_${startDate.month}_to_${endDate.day}_${endDate.month}_${endDate.year}.csv";
       final file = File("${directory.path}/$fileName");
-      await file.writeAsString(csv.toString());
+      await file.writeAsString(csvString);
 
-      final xFile = XFile(file.path, mimeType: 'text/csv');
-      await Share.shareXFiles(
-        [xFile],
-        text: 'NextGen Statement ($fromStr to $toStr)',
-        subject: 'NextGen Statement of Operations',
-      );
+      if (isDownload) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text("Excel saved to: ${file.path}"),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
+        final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
+        final xFile = XFile(file.path, mimeType: 'text/csv');
+        await Share.shareXFiles(
+          [xFile],
+          text: 'NextGen Statement ($fromStr to $toStr)',
+          subject: 'NextGen Statement of Operations',
+        );
+      }
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text("Export error: $e"), backgroundColor: Colors.red),
@@ -184,27 +376,27 @@ class _CustomDrawerState extends State<CustomDrawer> {
     }
   }
 
-  // --- 2. PDF (.PDF) EXPORT ---
-  Future<void> _exportDateRangePdf(
-      BuildContext context, DateTime startDate, DateTime endDate) async {
+  // --- 2. PDF EXPORT & DOWNLOAD ---
+  Future<void> _handlePdfOperation(
+      BuildContext context, DateTime startDate, DateTime endDate, {required bool isDownload}) async {
     final messenger = ScaffoldMessenger.of(context);
 
     messenger.showSnackBar(
-      const SnackBar(
+      SnackBar(
         content: Row(
           children: [
-            SizedBox(
+            const SizedBox(
               width: 16,
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
             ),
-            SizedBox(width: 12),
-            Text("PDF Statement ban raha hai...",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            const SizedBox(width: 12),
+            Text(isDownload ? "Downloading PDF Statement..." : "Generating PDF Statement...",
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ],
         ),
-        backgroundColor: Color(0xFFE88226),
-        duration: Duration(milliseconds: 1400),
+        backgroundColor: const Color(0xFFE88226),
+        duration: const Duration(milliseconds: 1400),
       ),
     );
 
@@ -224,165 +416,37 @@ class _CustomDrawerState extends State<CustomDrawer> {
       if (records.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(
-              content: Text("Is selected date range mein koi job card nahi mila!"),
+              content: Text("No job cards found for the selected date range."),
               backgroundColor: Colors.orange),
         );
         return;
       }
 
-      final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
-      final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
-      final now = DateTime.now();
-
-      double totalAmount = 0.0;
-      for (var r in records) {
-        final p = double.tryParse((r['invoice_amount'] ?? r['quotation_amount'] ?? '0')
-                .toString()
-                .replaceAll(',', '')) ??
-            0.0;
-        totalAmount += p;
-      }
-
-      final pdf = pw.Document();
-
-      pdf.addPage(
-        pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(22),
-          build: (pw.Context pwContext) => [
-            pw.Container(
-              padding: const pw.EdgeInsets.all(12),
-              decoration: pw.BoxDecoration(
-                color: PdfColor.fromHex('#0C2232'),
-                borderRadius: pw.BorderRadius.circular(6),
-              ),
-              child: pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Row(
-                        children: [
-                          pw.Text(
-                            "NEXTGEN",
-                            style: pw.TextStyle(
-                              fontSize: 18,
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColors.white,
-                              letterSpacing: 1.1,
-                            ),
-                          ),
-                          pw.SizedBox(width: 6),
-                          pw.Text(
-                            "CONTROLS",
-                            style: pw.TextStyle(
-                              fontSize: 16,
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColor.fromHex('#E88226'),
-                              letterSpacing: 1.1,
-                            ),
-                          ),
-                        ],
-                      ),
-                      pw.SizedBox(height: 2),
-                      pw.Text(
-                        "PRIVATE LIMITED • Simplify Your Industry",
-                        style: const pw.TextStyle(color: PdfColors.grey400, fontSize: 8.5),
-                      ),
-                    ],
-                  ),
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.end,
-                    children: [
-                      pw.Text(
-                        "Statement Period: $fromStr - $toStr",
-                        style: pw.TextStyle(
-                            color: PdfColors.amber300, fontSize: 9.5, fontWeight: pw.FontWeight.bold),
-                      ),
-                      pw.Text("Generated: ${now.day}/${now.month}/${now.year}",
-                          style: const pw.TextStyle(color: PdfColors.grey400, fontSize: 8.5)),
-                      pw.Text("Total Orders: ${records.length} Panels",
-                          style: const pw.TextStyle(color: PdfColors.white, fontSize: 8.5)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            pw.SizedBox(height: 12),
-
-            pw.TableHelper.fromTextArray(
-              headers: [
-                'SR',
-                'DATE',
-                'JOB NO',
-                'CLIENT NAME',
-                'PANEL / ITEM DETAILS',
-                'PO NUMBER',
-                'STATUS',
-                'DELIVERY',
-                'PRICE (INR)',
-                'INVOICE NO'
-              ],
-              headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 8.5),
-              headerDecoration: pw.BoxDecoration(color: PdfColor.fromHex('#1E3E5A')),
-              rowDecoration: const pw.BoxDecoration(
-                border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey300, width: 0.5)),
-              ),
-              cellAlignment: pw.Alignment.centerLeft,
-              cellStyle: const pw.TextStyle(fontSize: 8),
-              cellPadding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 5),
-              data: records.asMap().entries.map((entry) {
-                final idx = entry.key + 1;
-                final j = entry.value;
-                final price = j['invoice_amount'] ?? j['quotation_amount'] ?? '-';
-                return [
-                  "$idx",
-                  j['start_date'] ?? '-',
-                  j['job_no'] ?? '-',
-                  j['client'] ?? '-',
-                  j['panel_type'] ?? '-',
-                  j['po_number'] ?? '-',
-                  j['status'] ?? '-',
-                  j['target_date'] ?? '-',
-                  price != '-' ? "Rs. $price" : '-',
-                  j['invoice_no'] ?? '-',
-                ];
-              }).toList(),
-            ),
-
-            pw.SizedBox(height: 14),
-            pw.Divider(color: PdfColors.grey400),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text(
-                  "Total Statement Valuation: Rs. ${totalAmount.toStringAsFixed(0)}",
-                  style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: PdfColors.blueGrey900),
-                ),
-                pw.Text(
-                  "NEXTGEN CONTROLS PRIVATE LIMITED - Official Verified Statement",
-                  style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-
-      final directory = await getApplicationDocumentsDirectory();
+      final pdf = _buildPdfDocument(records, startDate, endDate);
+      final directory = await _getTargetDirectory(isDownload);
       final fileName =
           "NextGen_Statement_${startDate.day}_${startDate.month}_to_${endDate.day}_${endDate.month}_${endDate.year}.pdf";
       final file = File("${directory.path}/$fileName");
       await file.writeAsBytes(await pdf.save());
 
-      final xFile = XFile(file.path, mimeType: 'application/pdf');
-      await Share.shareXFiles(
-        [xFile],
-        text: 'NextGen Statement ($fromStr to $toStr)',
-        subject: 'NextGen Statement of Operations',
-      );
+      if (isDownload) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text("PDF saved to: ${file.path}"),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
+        final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
+        final xFile = XFile(file.path, mimeType: 'application/pdf');
+        await Share.shareXFiles(
+          [xFile],
+          text: 'NextGen Statement ($fromStr to $toStr)',
+          subject: 'NextGen Statement of Operations',
+        );
+      }
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text("PDF error: $e"), backgroundColor: Colors.red),
@@ -390,7 +454,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
     }
   }
 
-  // --- 3. STATEMENT DATE SELECTOR DIALOG (100% CLEAR DARK MODE & NO 'BANK' TEXT) ---
+  // --- 3. STATEMENT DATE SELECTOR DIALOG WITH SHARE & DOWNLOAD ---
   void _openStatementModal(BuildContext context, bool isDark) {
     DateTime startDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
     DateTime endDate = DateTime.now();
@@ -398,7 +462,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF0B1724), // Hardcoded Dark Industrial Solid Navy
+      backgroundColor: const Color(0xFF0B1724),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
@@ -409,214 +473,269 @@ class _CustomDrawerState extends State<CustomDrawer> {
 
             return Padding(
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: const [
-                          Icon(Icons.date_range_rounded, color: Color(0xFFE88226), size: 24),
-                          SizedBox(width: 8),
-                          Text(
-                            "Export Statement of Operations",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.3,
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: const [
+                            Icon(Icons.date_range_rounded, color: Color(0xFFE88226), size: 24),
+                            SizedBox(width: 8),
+                            Text(
+                              "Statement of Operations",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.3,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const Divider(color: Color(0xFF1E3A52), height: 18),
-                  const Text(
-                    "Date range chunein aur verified records export karein:",
-                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // DATES BOXES
-                  Row(
-                    children: [
-                      // FROM DATE
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: startDate,
-                              firstDate: DateTime(2023),
-                              lastDate: DateTime(2030),
-                            );
-                            if (picked != null) {
-                              setModalState(() => startDate = picked);
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF102436),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: const Color(0xFF224B6F), width: 1.2),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  "FROM DATE",
-                                  style: TextStyle(
-                                    color: Color(0xFF38BDF8),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.calendar_month_rounded,
-                                        size: 15, color: Color(0xFFE88226)),
-                                    const SizedBox(width: 7),
-                                    Text(
-                                      formatD(startDate),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 13.5,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(width: 12),
-
-                      // TO DATE
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () async {
-                            final picked = await showDatePicker(
-                              context: context,
-                              initialDate: endDate,
-                              firstDate: DateTime(2023),
-                              lastDate: DateTime(2030),
-                            );
-                            if (picked != null) {
-                              setModalState(() => endDate = picked);
-                            }
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF102436),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: const Color(0xFF224B6F), width: 1.2),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  "TO DATE",
-                                  style: TextStyle(
-                                    color: Color(0xFF38BDF8),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.calendar_month_rounded,
-                                        size: 15, color: Color(0xFFE88226)),
-                                    const SizedBox(width: 7),
-                                    Text(
-                                      formatD(endDate),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 13.5,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
+                          onPressed: () => Navigator.pop(ctx),
                         ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // EXCEL BUTTON
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10B981),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      icon: const Icon(Icons.table_chart_rounded, color: Colors.white, size: 18),
-                      label: Text(
-                        "Export Excel Statement (${formatD(startDate)} - ${formatD(endDate)})",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _exportDateRangeExcel(context, startDate, endDate);
-                      },
+                      ],
                     ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // PDF BUTTON
-                  SizedBox(
-                    width: double.infinity,
-                    height: 46,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFE88226),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      icon: const Icon(Icons.picture_as_pdf_rounded, color: Colors.white, size: 18),
-                      label: Text(
-                        "Export PDF Statement (${formatD(startDate)} - ${formatD(endDate)})",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _exportDateRangePdf(context, startDate, endDate);
-                      },
+                    const Divider(color: Color(0xFF1E3A52), height: 18),
+                    const Text(
+                      "Select date range and export or download records directly to your device:",
+                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+
+                    // DATES BOXES
+                    Row(
+                      children: [
+                        // FROM DATE
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: startDate,
+                                firstDate: DateTime(2023),
+                                lastDate: DateTime(2030),
+                              );
+                              if (picked != null) {
+                                setModalState(() => startDate = picked);
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF102436),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF224B6F), width: 1.2),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "FROM DATE",
+                                    style: TextStyle(
+                                      color: Color(0xFF38BDF8),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.calendar_month_rounded,
+                                          size: 15, color: Color(0xFFE88226)),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        formatD(startDate),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+
+                        // TO DATE
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: endDate,
+                                firstDate: DateTime(2023),
+                                lastDate: DateTime(2030),
+                              );
+                              if (picked != null) {
+                                setModalState(() => endDate = picked);
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF102436),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: const Color(0xFF224B6F), width: 1.2),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "TO DATE",
+                                    style: TextStyle(
+                                      color: Color(0xFF38BDF8),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.calendar_month_rounded,
+                                          size: 15, color: Color(0xFFE88226)),
+                                      const SizedBox(width: 7),
+                                      Text(
+                                        formatD(endDate),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // EXCEL ACTIONS (DOWNLOAD & SHARE)
+                    const Text(
+                      "EXCEL (.CSV) STATEMENT",
+                      style: TextStyle(color: Color(0xFF10B981), fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 44,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.download_rounded, color: Colors.white, size: 18),
+                              label: const Text(
+                                "Download Excel",
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _handleExcelOperation(context, startDate, endDate, isDownload: true);
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: 44,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Color(0xFF10B981), width: 1.2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.share_rounded, color: Color(0xFF10B981), size: 17),
+                              label: const Text(
+                                "Share Excel",
+                                style: TextStyle(color: Color(0xFF10B981), fontWeight: FontWeight.w800, fontSize: 12),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _handleExcelOperation(context, startDate, endDate, isDownload: false);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // PDF ACTIONS (DOWNLOAD & SHARE)
+                    const Text(
+                      "PDF STATEMENT OF OPERATIONS",
+                      style: TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 44,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFE88226),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.download_rounded, color: Colors.white, size: 18),
+                              label: const Text(
+                                "Download PDF",
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _handlePdfOperation(context, startDate, endDate, isDownload: true);
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: SizedBox(
+                            height: 44,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Color(0xFFE88226), width: 1.2),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              icon: const Icon(Icons.share_rounded, color: Color(0xFFE88226), size: 17),
+                              label: const Text(
+                                "Share PDF",
+                                style: TextStyle(color: Color(0xFFE88226), fontWeight: FontWeight.w800, fontSize: 12),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _handlePdfOperation(context, startDate, endDate, isDownload: false);
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -640,7 +759,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
           child: SafeArea(
             child: Column(
               children: [
-                // 1. BRAND HEADER (LOGO FULL VISIBILITY - NO CUTTING)
+                // 1. BRAND HEADER
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 14.0),
                   decoration: BoxDecoration(
@@ -653,7 +772,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // FULL LOGO BADGE (WHITE BASE - ZERO CLIPPING)
                           Container(
                             width: 52,
                             height: 52,
@@ -671,7 +789,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                               ],
                             ),
                             child: Image.asset(
-                              'assets/images/nextgen_logo.jpeg',
+                              'assets/images/nextgen_logo_1.jpg',
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) {
                                 return const Icon(
@@ -844,7 +962,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                         context: context,
                         icon: Icons.receipt_long_rounded,
                         title: "Statement of Operations",
-                        subtitle: "Date-Range PDF / Excel export",
+                        subtitle: "Date-Range PDF / Excel export & download",
                         isActive: false,
                         isDark: isDark,
                         onTap: () {
@@ -933,7 +1051,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
     final activeBg = isDark ? const Color(0xFF163650) : const Color(0xFFE0F2FE);
     final inactiveBg = isDark ? const Color(0xFF0B1F2F) : Colors.white;
     final activeBorder = const Color(0xFFE88226);
-    final inactiveBorder = isDark ? const Color(0xFF1A3852) : const Color(0xFFE2E8F0);
+    final inactiveBorder = isDark ? const Color(0xFF1A3852) : const Color(0xFFCBD5E1);
 
     return Material(
       color: Colors.transparent,

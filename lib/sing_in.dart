@@ -59,7 +59,7 @@ class _SignInScreenState extends State<SignInScreen> {
       if (!hasLoggedInOnce) {
         if (mounted) {
           _showSnack(
-            "Biometric link nahi hai! Pehle User ID aur Password se Sign In karein.",
+            "Biometrics not linked. Please sign in with User ID and Password first.",
             isError: true,
           );
         }
@@ -71,12 +71,11 @@ class _SignInScreenState extends State<SignInScreen> {
 
       if (!canCheck && !isDeviceSupported) {
         if (mounted) {
-          _showSnack("Device par Biometric/Face hardware supported nahi hai.", isError: true);
+          _showSnack("Biometric or Face recognition hardware is not supported on this device.", isError: true);
         }
         return;
       }
 
-      // Sirf localizedReason pass kiya hai - Zero named parameter errors
       final bool didAuthenticate = await _auth.authenticate(
         localizedReason: 'Scan Face or Fingerprint to unlock Nextgen Portal',
       );
@@ -94,7 +93,7 @@ class _SignInScreenState extends State<SignInScreen> {
     }
   }
 
-  // --- SUBMIT: SIGN IN YA CREATE ACCOUNT ---
+  // --- SUBMIT: SIGN IN OR CREATE ACCOUNT ---
   Future<void> _handleSubmit() async {
     final userId = _userIdController.text.trim();
     final password = _passwordController.text.trim();
@@ -136,7 +135,7 @@ class _SignInScreenState extends State<SignInScreen> {
           }
         } else {
           setState(() => _isLoading = false);
-          _showSnack("User ID ya Password galat hai!", isError: true);
+          _showSnack("Invalid User ID or Password.", isError: true);
         }
       } else {
         await _supabase.from('operators').insert({
@@ -153,7 +152,7 @@ class _SignInScreenState extends State<SignInScreen> {
             _isLoading = false;
             _isSignInTab = true;
           });
-          _showSnack("Operator registered successfully! Ab sign in karein.");
+          _showSnack("Operator registered successfully. Please sign in.");
         }
       }
     } catch (e) {
@@ -202,7 +201,7 @@ class _SignInScreenState extends State<SignInScreen> {
             Future<void> sendOtpToPhone() async {
               final phone = forgotMobileCtrl.text.trim();
               if (phone.length != 10) {
-                setSheetState(() => sheetError = "Kripya 10-digit registered number daalein");
+                setSheetState(() => sheetError = "Please enter a valid 10-digit registered number.");
                 return;
               }
 
@@ -229,7 +228,7 @@ class _SignInScreenState extends State<SignInScreen> {
                   });
                 } else {
                   setSheetState(() {
-                    sheetError = "Yeh mobile number database me registered nahi hai!";
+                    sheetError = "Mobile number not found in database.";
                     isChecking = false;
                   });
                 }
@@ -244,7 +243,7 @@ class _SignInScreenState extends State<SignInScreen> {
             void verifyEnteredOtp() {
               final enteredOtp = otpCtrl.text.trim();
               if (enteredOtp.isEmpty) {
-                setSheetState(() => sheetError = "Kripya 4-digit code enter karein");
+                setSheetState(() => sheetError = "Please enter the 4-digit code.");
                 return;
               }
 
@@ -254,7 +253,7 @@ class _SignInScreenState extends State<SignInScreen> {
                   isOtpVerified = true;
                 });
               } else {
-                setSheetState(() => sheetError = "Galat Code! Kripya sahi OTP daalein.");
+                setSheetState(() => sheetError = "Invalid verification code. Please try again.");
               }
             }
 
@@ -264,12 +263,12 @@ class _SignInScreenState extends State<SignInScreen> {
               final phone = forgotMobileCtrl.text.trim();
 
               if (newPass.length < 4) {
-                setSheetState(() => sheetError = "Password min 4 characters ka ho");
+                setSheetState(() => sheetError = "Password must be at least 4 characters.");
                 return;
               }
 
               if (newPass != confirmPass) {
-                setSheetState(() => sheetError = "Passwords match nahi ho rahe");
+                setSheetState(() => sheetError = "Passwords do not match.");
                 return;
               }
 
@@ -286,7 +285,7 @@ class _SignInScreenState extends State<SignInScreen> {
 
                 if (mounted) {
                   Navigator.pop(context);
-                  _showSnack("Password update ho gaya! Naye password se login karein.");
+                  _showSnack("Password updated successfully. Please sign in with your new password.");
                 }
               } catch (e) {
                 setSheetState(() {
@@ -541,6 +540,38 @@ class _SignInScreenState extends State<SignInScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // --- LOGO IMAGE (SQUARE SHAPE & BLUE BORDER) ---
+                  Container(
+                    width: 64,
+                    height: 64,
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.zero,
+                      border: Border.all(color: const Color(0xFF0284C7), width: 2.0),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF0284C7).withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Image.asset(
+                      'assets/images/nextgen_logo_1.jpg',
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.settings_suggest_rounded,
+                          size: 32,
+                          color: Color(0xFF0284C7),
+                        );
+                      },
                     ),
                   ),
 

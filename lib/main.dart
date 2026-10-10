@@ -5,7 +5,7 @@ import 'sing_in.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Supabase background me start hoga taaki pehli baar me app freeze/cut na ho
+  // Initialize Supabase asynchronously in the background to prevent UI freeze during initial launch
   Supabase.initialize(
     url: 'https://xfmbzzwlfglltidudjsn.supabase.co',
     anonKey: 'sb_publishable_zgdxED00ZLe7MyojA6XJig_ksFfkWUr',
@@ -29,13 +29,17 @@ class MyApp extends StatelessWidget {
 }
 
 // ==========================================
-// WELCOME SCREEN (INSTANT LAUNCH - NO TIMEOUT)
+// WELCOME SCREEN (MOBILE + DESKTOP ADAPTIVE)
 // ==========================================
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Screen width check taaki mobile aur laptop dono automatically perfect set rahein
+    final screenWidth = MediaQuery.of(context).size.width;
+    final bool isDesktop = screenWidth > 700;
+
     return Scaffold(
       backgroundColor: const Color(0xFF07121A),
       body: Container(
@@ -47,7 +51,7 @@ class WelcomeScreen extends StatelessWidget {
             radius: 1.3,
             colors: [
               Color(0xFF193B54),
-              Color(0xFF0D2230),
+              Color(0xFF0D2232),
               Color(0xFF061017),
             ],
             stops: [0.0, 0.55, 1.0],
@@ -55,7 +59,10 @@ class WelcomeScreen extends StatelessWidget {
         ),
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
+            padding: EdgeInsets.symmetric(
+              horizontal: isDesktop ? 24.0 : 14.0,
+              vertical: isDesktop ? 12.0 : 8.0,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -78,7 +85,7 @@ class WelcomeScreen extends StatelessWidget {
                   ),
                   child: ClipOval(
                     child: Image.asset(
-                      'assets/images/nextgen_logo.jpeg',
+                      'assets/images/nextgen_logo_1.jpg',
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return const Center(
@@ -177,9 +184,10 @@ class WelcomeScreen extends StatelessWidget {
                   child: GridView.count(
                     crossAxisCount: 2,
                     physics: const NeverScrollableScrollPhysics(),
-                    crossAxisSpacing: 9,
-                    mainAxisSpacing: 9,
-                    childAspectRatio: 1.40,
+                    crossAxisSpacing: isDesktop ? 12 : 9,
+                    mainAxisSpacing: isDesktop ? 10 : 9,
+                    // Mobile par original 1.40 ratio rahega taaki text na kate, Laptop par wide ratio
+                    childAspectRatio: isDesktop ? 3.0 : 1.40,
                     children: [
                       _buildLargeMatrixCard(
                         icon: Icons.electrical_services_rounded,
@@ -187,6 +195,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "Control Panels",
                         desc: "PLC Panels, VFD, APFC, MCC & PCC manufacturing.",
                         color: const Color(0xFFE88226),
+                        isDesktop: isDesktop,
                       ),
                       _buildLargeMatrixCard(
                         icon: Icons.speed_rounded,
@@ -194,6 +203,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "AC & DC Drives",
                         desc: "VFD drives setup, motor tuning & syncing.",
                         color: const Color(0xFFF59E0B),
+                        isDesktop: isDesktop,
                       ),
                       _buildLargeMatrixCard(
                         icon: Icons.phone_android_rounded,
@@ -201,6 +211,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "Mobile Telemetry",
                         desc: "Live PLC telemetry, alerts & mobile control.",
                         color: const Color(0xFF38BDF8),
+                        isDesktop: isDesktop,
                       ),
                       _buildLargeMatrixCard(
                         icon: Icons.laptop_chromebook_rounded,
@@ -208,6 +219,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "Industrial Software",
                         desc: "Dashboard, Alarms, Logging & reports.",
                         color: const Color(0xFFA855F7),
+                        isDesktop: isDesktop,
                       ),
                       _buildLargeMatrixCard(
                         icon: Icons.memory_rounded,
@@ -215,6 +227,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "PLC Retrofitting",
                         desc: "Machine logic modernizing & programming.",
                         color: const Color(0xFF00E676),
+                        isDesktop: isDesktop,
                       ),
                       _buildLargeMatrixCard(
                         icon: Icons.build_circle_outlined,
@@ -222,6 +235,7 @@ class WelcomeScreen extends StatelessWidget {
                         title: "AMC Maintenance",
                         desc: "Breakdown repair & monthly contracts.",
                         color: const Color(0xFFF43F5E),
+                        isDesktop: isDesktop,
                       ),
                     ],
                   ),
@@ -252,7 +266,7 @@ class WelcomeScreen extends StatelessWidget {
 
                 const SizedBox(height: 7),
 
-                // 5. CONTACT CONTAINER
+                // 5. CONTACT CONTAINER (MOBILE ME 2-LINE, DESKTOP ME 1-LINE)
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
@@ -278,21 +292,35 @@ class WelcomeScreen extends StatelessWidget {
                       const Divider(color: Color(0xFF16324A), height: 1),
                       const SizedBox(height: 5),
 
-                      Row(
-                        children: [
-                          Expanded(child: _buildPhoneChip("+91 9892485539")),
-                          const SizedBox(width: 6),
-                          Expanded(child: _buildPhoneChip("+91 9921379012")),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          Expanded(child: _buildPhoneChip("+91 9987369614")),
-                          const SizedBox(width: 6),
-                          Expanded(child: _buildPhoneChip("+91 9767013933")),
-                        ],
-                      ),
+                      if (isDesktop)
+                        Row(
+                          children: [
+                            Expanded(child: _buildPhoneChip("+91 9892485539")),
+                            const SizedBox(width: 6),
+                            Expanded(child: _buildPhoneChip("+91 9921379012")),
+                            const SizedBox(width: 6),
+                            Expanded(child: _buildPhoneChip("+91 9987369614")),
+                            const SizedBox(width: 6),
+                            Expanded(child: _buildPhoneChip("+91 9767013933")),
+                          ],
+                        )
+                      else ...[
+                        Row(
+                          children: [
+                            Expanded(child: _buildPhoneChip("+91 9892485539")),
+                            const SizedBox(width: 6),
+                            Expanded(child: _buildPhoneChip("+91 9921379012")),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        Row(
+                          children: [
+                            Expanded(child: _buildPhoneChip("+91 9987369614")),
+                            const SizedBox(width: 6),
+                            Expanded(child: _buildPhoneChip("+91 9767013933")),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -369,9 +397,10 @@ class WelcomeScreen extends StatelessWidget {
     required String title,
     required String desc,
     required Color color,
+    required bool isDesktop,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 12 : 9, vertical: 7),
       decoration: BoxDecoration(
         color: const Color(0xFF0F2638).withOpacity(0.85),
         borderRadius: BorderRadius.circular(11),
@@ -380,66 +409,124 @@ class WelcomeScreen extends StatelessWidget {
           width: 1.1,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(7),
+      child: isDesktop
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.18),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: color, size: 22),
                 ),
-                child: Icon(icon, color: color, size: 18),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF132D42),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  tag,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w800,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF132D42),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              tag,
+                              style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        desc,
+                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10.5, height: 1.2),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                      child: Icon(icon, color: color, size: 18),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF132D42),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        tag,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2.5),
-              Text(
-                desc,
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 9.2,
-                  height: 1.22,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2.5),
+                    Text(
+                      desc,
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 9.2,
+                        height: 1.22,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ],
-      ),
+              ],
+            ),
     );
   }
 

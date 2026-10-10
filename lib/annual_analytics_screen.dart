@@ -52,13 +52,31 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
   }
 
   bool _matchesYear(Map<String, dynamic> job, String year) {
-    final dateStr = "${job['start_date']} ${job['created_at']} ${job['target_date']}";
-    if (dateStr.contains(year)) return true;
+    final start = (job['start_date'] ?? '').toString();
+    final created = (job['created_at'] ?? '').toString();
+    final target = (job['target_date'] ?? '').toString();
 
-    if (year == '2026' && (job['start_date'] == null || job['start_date'].toString().isEmpty)) {
+    if (start.contains(year) || created.contains(year) || target.contains(year)) {
       return true;
     }
+
+    if (year == '2026' && start.isEmpty && created.isEmpty) {
+      return true;
+    }
+
     return false;
+  }
+
+  static String formatIndianCurrency(double val) {
+    final double absVal = val.abs();
+    if (absVal == 0) return "₹0";
+
+    if (absVal < 100000) {
+      return "₹${absVal.toStringAsFixed(0)}";
+    }
+
+    final double inLakhs = absVal / 100000;
+    return "₹${inLakhs.toStringAsFixed(2)}L";
   }
 
   @override
@@ -73,74 +91,149 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
         final Color textSub = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
 
         // Filter Jobs for Selected Year
-        final selectedYearJobs = _allJobs.where((j) => _matchesYear(j, _selectedYear)).toList();
-        final int totalPanels = selectedYearJobs.length;
+        final List<Map<String, dynamic>> targetJobs = _allJobs.where((j) => _matchesYear(j, _selectedYear)).toList();
+        final int totalCount = targetJobs.length;
 
-        // --- YEARLY SUMMARY COUNTS (SAAL ME KITNA HUA / GAYA) ---
-        final int yearlyQuotes = selectedYearJobs.length;
+        // --- LIFECYCLE COUNTS ---
+        final int countDispatch = targetJobs.where((j) {
+          final st = (j['status'] ?? '').toString().toUpperCase();
+          return st == 'DISPATCHED' || st == 'BILLING';
+        }).length;
 
-        final int yearlyPO = selectedYearJobs.where((j) {
+        final int countTesting = targetJobs.where((j) {
+          final st = (j['status'] ?? '').toString().toUpperCase();
+          return st == 'TESTING' || st == 'COMPLETED';
+        }).length;
+
+        final int countRunning = targetJobs.where((j) {
+          final st = (j['status'] ?? '').toString().toUpperCase();
+          return st == 'RUNNING';
+        }).length;
+
+        // PENDING / ON HOLD STAGE
+        final int countPending = targetJobs.where((j) {
+          final st = (j['status'] ?? '').toString().toUpperCase();
+          return st == 'PENDING';
+        }).length;
+
+        final int countPO = targetJobs.where((j) {
           final po = (j['po_number'] ?? '').toString().trim();
           final specs = (j['specs_detail'] ?? '').toString();
           return po.isNotEmpty || specs.contains("PO:");
         }).length;
 
-        final int yearlyRunning = selectedYearJobs.where((j) {
-          final st = (j['status'] ?? '').toString().toUpperCase();
-          return st == 'RUNNING' || st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+        final int totalQuotesInitiated = targetJobs.where((j) {
+          final q = (j['quotation_amount'] ?? '').toString().trim();
+          return q.isNotEmpty && q != '0';
         }).length;
 
-        final int yearlyTesting = selectedYearJobs.where((j) {
+        final int countOpenQuotes = targetJobs.where((j) {
           final st = (j['status'] ?? '').toString().toUpperCase();
-          return st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+          final po = (j['po_number'] ?? '').toString().trim();
+          final specs = (j['specs_detail'] ?? '').toString();
+          final hasPo = po.isNotEmpty || specs.contains("PO:");
+          return st == 'QUOTATION' || (!hasPo && st != 'CANCELLED' && st != 'PENDING');
         }).length;
 
-        final int yearlyReady = selectedYearJobs.where((j) {
+        final int countCancelled = targetJobs.where((j) {
           final st = (j['status'] ?? '').toString().toUpperCase();
-          return st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+          return st == 'CANCELLED';
         }).length;
 
-        final int yearlyBilling = selectedYearJobs.where((j) {
-          final st = (j['status'] ?? '').toString().toUpperCase();
-          return st == 'BILLING' || st == 'DISPATCHED';
-        }).length;
-
-        final int yearlyDispatched = selectedYearJobs.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'DISPATCHED').length;
-        final int yearlyPending = selectedYearJobs.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'PENDING').length;
-        final int yearlyCancelled = selectedYearJobs.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'CANCELLED').length;
-
-        // Segments for Multi-colored Circle Chart
-        final List<DonutSegment> segments = [
-          DonutSegment(title: "QUOTES", count: yearlyQuotes, color: const Color(0xFF8B5CF6)),
-          DonutSegment(title: "PO REC'D", count: yearlyPO, color: const Color(0xFF10B981)),
-          DonutSegment(title: "RUNNING", count: yearlyRunning, color: const Color(0xFF0284C7)),
-          DonutSegment(title: "TESTING", count: yearlyTesting, color: const Color(0xFFEA580C)),
-          DonutSegment(title: "READY", count: yearlyReady, color: const Color(0xFF38BDF8)),
-          DonutSegment(title: "BILLING", count: yearlyBilling, color: const Color(0xFFE88226)),
-          DonutSegment(title: "DISPATCH", count: yearlyDispatched, color: const Color(0xFF059669)),
-          DonutSegment(title: "PENDING", count: yearlyPending, color: const Color(0xFFD97706)),
-          DonutSegment(title: "CANCEL", count: yearlyCancelled, color: const Color(0xFFEF4444)),
+        // ALL STAGES WITH EXACT MATCHING DASHBOARD COLORS
+        final List<StageItem> stages = [
+          StageItem(
+            name: "Quotes",
+            tag: "QUOTES",
+            subtext: "Total $totalQuotesInitiated quotes generated ($countOpenQuotes pending PO)",
+            count: countOpenQuotes > 0 ? countOpenQuotes : (totalQuotesInitiated > 0 ? totalQuotesInitiated : 0),
+            color: const Color(0xFF8B5CF6),
+          ),
+          StageItem(
+            name: "PO Received",
+            tag: "PO REC'D",
+            subtext: "Confirmed client orders in FY $_selectedYear",
+            count: countPO,
+            color: const Color(0xFF10B981),
+          ),
+          StageItem(
+            name: "Running",
+            tag: "RUNNING",
+            subtext: "Panel assembly and wiring in progress on shop floor",
+            count: countRunning,
+            color: const Color(0xFF0284C7),
+          ),
+          StageItem(
+            name: "Pending (On Hold)",
+            tag: "PENDING",
+            subtext: "Awaiting raw materials or drawing revision approval",
+            count: countPending,
+            color: const Color(0xFFD97706),
+          ),
+          StageItem(
+            name: "Testing",
+            tag: "TESTING",
+            subtext: "High-voltage megger and FAT quality inspection",
+            count: countTesting,
+            color: const Color(0xFFEA580C),
+          ),
+          StageItem(
+            name: "Dispatch",
+            tag: "DISPATCH",
+            subtext: "Invoiced and cleared for customer shipment",
+            count: countDispatch,
+            color: const Color(0xFF059669),
+          ),
         ];
 
-        // Revenue Sum
-        double totalValuation = 0.0;
-        for (var j in selectedYearJobs) {
-          final valStr = (j['invoice_amount'] ?? j['quotation_amount'] ?? '0').toString().replaceAll(',', '');
-          totalValuation += double.tryParse(valStr) ?? 0.0;
+        if (countCancelled > 0) {
+          stages.add(
+            StageItem(
+              name: "Cancelled",
+              tag: "CANCEL",
+              subtext: "Orders rejected or dropped",
+              count: countCancelled,
+              color: const Color(0xFFEF4444),
+            ),
+          );
         }
 
-        // Year-Over-Year Volume
-        final Map<String, int> yearlyTotals = {
-          for (var y in _trackedYears)
-            y: _allJobs.where((j) => _matchesYear(j, y)).length
-        };
-        final int maxYearCount = yearlyTotals.values.fold(0, (p, c) => c > p ? c : p);
+        // --- FINANCIAL AUDIT CALCULATION ---
+        double yearlyTotalQuoted = 0.0;
+        double yearlyTotalPO = 0.0;
+
+        for (var j in targetJobs) {
+          final qStr = (j['quotation_amount'] ?? '0').toString().replaceAll(',', '');
+          final pStr = (j['invoice_amount'] ?? '0').toString().replaceAll(',', '');
+
+          final qVal = double.tryParse(qStr) ?? 0.0;
+          final pVal = double.tryParse(pStr) ?? 0.0;
+
+          yearlyTotalQuoted += qVal;
+
+          if (pVal > 0) {
+            yearlyTotalPO += pVal;
+          } else {
+            final po = (j['po_number'] ?? '').toString().trim();
+            final specs = (j['specs_detail'] ?? '').toString();
+            if (po.isNotEmpty || specs.contains("PO:")) {
+              yearlyTotalPO += qVal;
+            }
+          }
+        }
+
+        final double yearlyVariance = yearlyTotalPO - yearlyTotalQuoted;
+        final bool isZeroDiff = yearlyVariance.abs() < 1.0;
+        final double variancePercent = (!isZeroDiff && yearlyTotalQuoted > 0) ? (yearlyVariance / yearlyTotalQuoted) * 100 : 0.0;
+        final double dispatchPercent = totalCount == 0 ? 0.0 : (countDispatch / totalCount) * 100;
+
+        final int pieTotal = stages.fold(0, (sum, item) => sum + item.count);
 
         return Scaffold(
           backgroundColor: screenBg,
           appBar: AppBar(
             backgroundColor: isDark ? const Color(0xFF0C2232) : Colors.white,
-            elevation: 0,
+            elevation: 0.5,
             iconTheme: IconThemeData(color: textMain),
             title: Text(
               "Annual Intelligence & Charts",
@@ -153,10 +246,10 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                   color: const Color(0xFFE88226),
                   onRefresh: _fetchYearlyData,
                   child: ListView(
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     physics: const BouncingScrollPhysics(),
                     children: [
-                      // 1. YEAR SELECTOR TABS
+                      // Year Selection Buttons
                       Row(
                         children: _trackedYears.map((yr) {
                           final isSelected = yr == _selectedYear;
@@ -189,7 +282,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // 2. YEARLY STAGE AUDIT STATS (SAAL ME KITNA HUA / GAYA)
+                      // --- 1. ACCURATE COMMERCIAL AUDIT CARD ---
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -203,28 +296,48 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text("FY $_selectedYear Stage Flow Summary", style: TextStyle(color: textMain, fontSize: 13, fontWeight: FontWeight.w900)),
-                                Text("₹${(totalValuation / 100000).toStringAsFixed(1)}L Valuation", style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900)),
+                                Text(
+                                  "FY $_selectedYear Quoted vs PO Audit",
+                                  style: TextStyle(color: textMain, fontSize: 13.5, fontWeight: FontWeight.w900),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: isZeroDiff
+                                        ? const Color(0xFF0284C7).withOpacity(0.15)
+                                        : (yearlyVariance < 0 ? const Color(0xFFEF4444).withOpacity(0.15) : const Color(0xFF10B981).withOpacity(0.15)),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    isZeroDiff
+                                        ? "Exact Match (0 Diff)"
+                                        : (yearlyVariance < 0
+                                            ? "-${formatIndianCurrency(yearlyVariance.abs())} (${variancePercent.abs().toStringAsFixed(1)}% Cut)"
+                                            : "+${formatIndianCurrency(yearlyVariance)} (+${variancePercent.toStringAsFixed(1)}% Gain)"),
+                                    style: TextStyle(
+                                      color: isZeroDiff
+                                          ? const Color(0xFF0284C7)
+                                          : (yearlyVariance < 0 ? const Color(0xFFEF4444) : const Color(0xFF10B981)),
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 12),
                             Row(
                               children: [
-                                _buildSummaryTile("Quotes", "$yearlyQuotes", const Color(0xFF8B5CF6), isDark),
-                                const SizedBox(width: 6),
-                                _buildSummaryTile("PO Received", "$yearlyPO", const Color(0xFF10B981), isDark),
-                                const SizedBox(width: 6),
-                                _buildSummaryTile("Running", "$yearlyRunning", const Color(0xFF0284C7), isDark),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                _buildSummaryTile("Testing Done", "$yearlyTesting", const Color(0xFFEA580C), isDark),
-                                const SizedBox(width: 6),
-                                _buildSummaryTile("Dispatched Out", "$yearlyDispatched", const Color(0xFF059669), isDark),
-                                const SizedBox(width: 6),
-                                _buildSummaryTile("Total Orders", "$totalPanels", const Color(0xFFE88226), isDark),
+                                _buildFinanceMetricTile("Total Quoted", formatIndianCurrency(yearlyTotalQuoted), const Color(0xFF8B5CF6), isDark),
+                                const SizedBox(width: 8),
+                                _buildFinanceMetricTile("Final PO / Billed", formatIndianCurrency(yearlyTotalPO), const Color(0xFF10B981), isDark),
+                                const SizedBox(width: 8),
+                                _buildFinanceMetricTile(
+                                  isZeroDiff ? "Difference" : (yearlyVariance < 0 ? "Discount / Cut" : "Extra Gain"),
+                                  isZeroDiff ? "₹0" : "${yearlyVariance < 0 ? '-' : '+'}${formatIndianCurrency(yearlyVariance.abs())}",
+                                  isZeroDiff ? const Color(0xFF0284C7) : (yearlyVariance < 0 ? const Color(0xFFEF4444) : const Color(0xFF10B981)),
+                                  isDark,
+                                ),
                               ],
                             ),
                           ],
@@ -232,187 +345,154 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // 3. YEARLY CIRCLE / DONUT GRAPH CARD
+                      // --- 2. SOLID PIE CHART CARD ---
                       Container(
+                        width: double.infinity,
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: cardBg,
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(color: borderColor),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(isDark ? 0.25 : 0.04),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
                         ),
                         child: Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
-                                  "Annual Production Share (FY $_selectedYear)",
-                                  style: TextStyle(color: textMain, fontSize: 13.5, fontWeight: FontWeight.w900),
+                                  "Annual Production Share",
+                                  style: TextStyle(color: textMain, fontSize: 14, fontWeight: FontWeight.w900),
                                 ),
                                 Text(
-                                  "$totalPanels Units",
-                                  style: const TextStyle(color: Color(0xFFE88226), fontSize: 12.5, fontWeight: FontWeight.w900),
+                                  "Total: $totalCount (FY $_selectedYear)",
+                                  style: const TextStyle(color: Color(0xFFE88226), fontSize: 12, fontWeight: FontWeight.w900),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 20),
 
-                            // CIRCLE CHART WITH CENTER BADGE
-                            SizedBox(
-                              width: 210,
-                              height: 210,
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  CustomPaint(
-                                    size: const Size(210, 210),
-                                    painter: YearlyDonutPainter(segments: segments),
+                            Center(
+                              child: SizedBox(
+                                width: 220,
+                                height: 220,
+                                child: CustomPaint(
+                                  size: const Size(220, 220),
+                                  painter: CleanSolidPiePainter(
+                                    stages: stages,
+                                    total: pieTotal > 0 ? pieTotal : totalCount,
+                                    borderColor: cardBg,
                                   ),
-                                  Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        "$totalPanels",
-                                        style: TextStyle(color: textMain, fontSize: 26, fontWeight: FontWeight.w900),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        "TOTAL ORDERS",
-                                        style: TextStyle(color: textSub, fontSize: 9.5, fontWeight: FontWeight.w800, letterSpacing: 0.6),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        "FY $_selectedYear",
-                                        style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.bold),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 20),
-
-                            // STAGE CHIPS WITH ACTUAL COUNTS
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: segments.map((s) {
-                                return Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: s.color.withOpacity(0.5)),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(width: 8, height: 8, decoration: BoxDecoration(color: s.color, shape: BoxShape.circle)),
-                                      const SizedBox(width: 6),
-                                      Text(s.title, style: TextStyle(color: textSub, fontSize: 10, fontWeight: FontWeight.bold)),
-                                      const SizedBox(width: 5),
-                                      Text("${s.count}", style: TextStyle(color: textMain, fontSize: 10.5, fontWeight: FontWeight.w900)),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
+                            const SizedBox(height: 16),
                           ],
                         ),
                       ),
                       const SizedBox(height: 14),
 
-                      // 4. YEAR-ON-YEAR OVERALL COMPARISON (MULTI-YEAR BARS)
+                      // --- 3. STAGES BREAKDOWN CARDS (Quotes, PO, Running, Pending, Testing, Dispatch) ---
+                      ...stages.map((stage) {
+                        final int baseTotal = pieTotal > 0 ? pieTotal : (totalCount > 0 ? totalCount : 1);
+                        final double pct = (stage.count / baseTotal) * 100;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: cardBg,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: borderColor),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 10,
+                                    height: 10,
+                                    decoration: BoxDecoration(color: stage.color, shape: BoxShape.circle),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      stage.name,
+                                      style: TextStyle(color: textMain, fontSize: 14, fontWeight: FontWeight.w900),
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: stage.color.withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      "${pct.toStringAsFixed(0)}%",
+                                      style: TextStyle(color: stage.color, fontSize: 11, fontWeight: FontWeight.w900),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    "${stage.count}",
+                                    style: TextStyle(color: textMain, fontSize: 13, fontWeight: FontWeight.w900),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: (stage.count / baseTotal).clamp(0.0, 1.0),
+                                  backgroundColor: isDark ? const Color(0xFF0F2638) : const Color(0xFFE2E8F0),
+                                  valueColor: AlwaysStoppedAnimation<Color>(stage.color),
+                                  minHeight: 5,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                stage.subtext,
+                                style: TextStyle(color: textSub, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+
+                      const SizedBox(height: 4),
+
+                      // --- 4. KEY INSIGHTS BOTTOM CARD ---
                       Container(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: cardBg,
-                          borderRadius: BorderRadius.circular(16),
+                          color: isDark ? const Color(0xFF0F2638) : const Color(0xFFE2E8F0).withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: borderColor),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              "Year-on-Year Production Growth",
-                              style: TextStyle(color: textMain, fontSize: 13.5, fontWeight: FontWeight.w900),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  "FY $_selectedYear Summary",
+                                  style: TextStyle(color: textMain, fontSize: 13.5, fontWeight: FontWeight.w900),
+                                ),
+                                Text(
+                                  "${dispatchPercent.toStringAsFixed(0)}% Delivered",
+                                  style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Text("Saalaana panel production ka direct comparison:", style: TextStyle(color: textSub, fontSize: 11)),
-                            const SizedBox(height: 16),
-
-                            Column(
-                              children: _trackedYears.map((yr) {
-                                final count = yearlyTotals[yr] ?? 0;
-                                final double ratio = maxYearCount == 0 ? 0.0 : (count / maxYearCount);
-                                final isCur = yr == _selectedYear;
-
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 12.0),
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 54,
-                                        child: Text(
-                                          "FY $yr",
-                                          style: TextStyle(
-                                            color: isCur ? const Color(0xFFE88226) : textMain,
-                                            fontWeight: isCur ? FontWeight.w900 : FontWeight.bold,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: Stack(
-                                          children: [
-                                            Container(
-                                              height: 18,
-                                              decoration: BoxDecoration(
-                                                color: isDark ? const Color(0xFF0F2638) : const Color(0xFFE2E8F0),
-                                                borderRadius: BorderRadius.circular(5),
-                                              ),
-                                            ),
-                                            FractionallySizedBox(
-                                              widthFactor: ratio.clamp(0.04, 1.0),
-                                              child: Container(
-                                                height: 18,
-                                                decoration: BoxDecoration(
-                                                  color: isCur ? const Color(0xFFE88226) : const Color(0xFF0284C7),
-                                                  borderRadius: BorderRadius.circular(5),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      SizedBox(
-                                        width: 50,
-                                        child: Text(
-                                          "$count Units",
-                                          textAlign: TextAlign.end,
-                                          style: TextStyle(
-                                            color: isCur ? const Color(0xFFE88226) : textMain,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 11.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                            ),
+                            const SizedBox(height: 8),
+                            _buildInsightBullet("Total Job Cards: $totalCount (Valuation: ${formatIndianCurrency(yearlyTotalPO)})", textSub),
+                            _buildInsightBullet("Shop Floor: $countRunning in active production, $countPending on hold, $countTesting in quality testing.", textSub),
+                            _buildInsightBullet("Completed: $countDispatch (Cleared and dispatched)", textSub),
                           ],
                         ),
                       ),
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
@@ -421,84 +501,209 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
     );
   }
 
-  Widget _buildSummaryTile(String title, String val, Color color, bool isDark) {
+  Widget _buildFinanceMetricTile(String label, String value, Color color, bool isDark) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF071824) : const Color(0xFFF8FAFC),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: color.withOpacity(0.3)),
         ),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(val, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w900)),
+            Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w900)),
             const SizedBox(height: 2),
             Text(
-              title,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 9, fontWeight: FontWeight.bold),
+              style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 9.5, fontWeight: FontWeight.bold),
             ),
           ],
         ),
       ),
     );
   }
+
+  Widget _buildInsightBullet(String text, Color textSub) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("• ", style: TextStyle(color: Color(0xFFE88226), fontSize: 12, fontWeight: FontWeight.bold)),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(color: textSub, fontSize: 11.5, height: 1.3),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class DonutSegment {
-  final String title;
+class StageItem {
+  final String name;
+  final String tag;
+  final String subtext;
   final int count;
   final Color color;
 
-  DonutSegment({required this.title, required this.count, required this.color});
+  StageItem({
+    required this.name,
+    required this.tag,
+    required this.subtext,
+    required this.count,
+    required this.color,
+  });
 }
 
-// PAINTER JO SABHI STAGES KO EQUAL MULTI-COLOR SLICES ME DIVIDE KAREGA
-class YearlyDonutPainter extends CustomPainter {
-  final List<DonutSegment> segments;
+// FULL SOLID PIE CHART PAINTER
+class CleanSolidPiePainter extends CustomPainter {
+  final List<StageItem> stages;
+  final int total;
+  final Color borderColor;
 
-  YearlyDonutPainter({required this.segments});
+  CleanSolidPiePainter({
+    required this.stages,
+    required this.total,
+    required this.borderColor,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = min(size.width, size.height) / 2 - 8;
-    const strokeWidth = 24.0;
+    final radius = size.width / 2 - 4;
 
-    final bgPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.12)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth;
+    final activeStages = stages.where((s) => s.count > 0).toList();
 
-    canvas.drawCircle(center, radius, bgPaint);
+    if (total == 0 || activeStages.isEmpty) {
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..color = const Color(0xFF0284C7).withOpacity(0.2)
+          ..style = PaintingStyle.fill,
+      );
+      _drawCenteredText(canvas, center, "NO DATA", "0");
+      return;
+    }
 
-    final activeSegments = segments.where((s) => s.count > 0).toList();
-    if (activeSegments.isEmpty) return;
+    if (activeStages.length == 1) {
+      final singleStage = activeStages.first;
+      canvas.drawCircle(
+        center,
+        radius,
+        Paint()
+          ..color = singleStage.color
+          ..style = PaintingStyle.fill,
+      );
 
-    final double totalActiveCount = activeSegments.fold(0.0, (sum, s) => sum + s.count);
+      _drawCenteredText(canvas, center, singleStage.tag, "100% (${singleStage.count})");
+      return;
+    }
+
     double startAngle = -pi / 2;
 
-    for (var segment in activeSegments) {
-      final sweepAngle = (segment.count / totalActiveCount) * 2 * pi;
+    for (var stage in activeStages) {
+      final sweepAngle = (stage.count / total) * 2 * pi;
+      if (sweepAngle <= 0) continue;
 
-      final paint = Paint()
-        ..color = segment.color
+      final path = Path()
+        ..moveTo(center.dx, center.dy)
+        ..arcTo(
+          Rect.fromCircle(center: center, radius: radius),
+          startAngle,
+          sweepAngle,
+          false,
+        )
+        ..close();
+
+      final slicePaint = Paint()
+        ..color = stage.color
+        ..style = PaintingStyle.fill;
+      canvas.drawPath(path, slicePaint);
+
+      final lineBorderPaint = Paint()
+        ..color = borderColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth
-        ..strokeCap = activeSegments.length > 1 ? StrokeCap.round : StrokeCap.butt;
+        ..strokeWidth = 2.0;
+      canvas.drawPath(path, lineBorderPaint);
 
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        startAngle + (activeSegments.length > 1 ? 0.05 : 0.0),
-        max(sweepAngle - (activeSegments.length > 1 ? 0.10 : 0.0), 0.02),
-        false,
-        paint,
-      );
+      final double pct = (stage.count / total) * 100;
+      if (pct >= 8.0) {
+        final midAngle = startAngle + (sweepAngle / 2);
+        final labelRadius = radius * 0.62;
+        final labelPos = Offset(
+          center.dx + labelRadius * cos(midAngle),
+          center.dy + labelRadius * sin(midAngle),
+        );
+
+        final labelText = pct >= 14.0 ? "${stage.tag}\n${pct.toStringAsFixed(0)}%" : "${pct.toStringAsFixed(0)}%";
+
+        final textPainter = TextPainter(
+          textAlign: TextAlign.center,
+          text: TextSpan(
+            text: labelText,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              height: 1.15,
+              shadows: [
+                Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(0, 1)),
+              ],
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        textPainter.paint(
+          canvas,
+          Offset(labelPos.dx - textPainter.width / 2, labelPos.dy - textPainter.height / 2),
+        );
+      }
 
       startAngle += sweepAngle;
     }
+  }
+
+  void _drawCenteredText(Canvas canvas, Offset center, String line1, String line2) {
+    final textPainter = TextPainter(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: "$line1\n",
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+            ),
+          ),
+          TextSpan(
+            text: line2,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+            ),
+          ),
+        ],
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(
+      canvas,
+      Offset(center.dx - textPainter.width / 2, center.dy - textPainter.height / 2),
+    );
   }
 
   @override

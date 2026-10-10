@@ -63,6 +63,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return "${dt.day} ${_monthName(dt.month)} ${dt.year}";
   }
 
+  static String _extractQuoteNo(String specs) {
+    final reg = RegExp(r'\[QUOTE:\s*(.*?)\]');
+    final match = reg.firstMatch(specs);
+    if (match != null && match.groupCount >= 1) {
+      return match.group(1)?.trim() ?? '';
+    }
+    return '';
+  }
+
   // --- DELETE JOB FUNCTION ---
   Future<void> _deleteJob(dynamic jobId, BuildContext? sheetContext) async {
     final bool? confirm = await showDialog<bool>(
@@ -70,7 +79,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: const Color(0xFF0C2232),
         title: const Text("Delete Job?", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-        content: const Text("Kya aap sach me is job record ko delete karna chahte hain?", style: TextStyle(color: Colors.white70, fontSize: 13)),
+        content: const Text("Are you sure you want to permanently delete this job record?", style: TextStyle(color: Colors.white70, fontSize: 13)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx, false),
@@ -94,7 +103,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Job record successfully delete ho gaya!"), backgroundColor: Colors.green),
+            const SnackBar(content: Text("Job record deleted successfully!"), backgroundColor: Colors.green),
           );
         }
       } catch (e) {
@@ -109,11 +118,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   // --- EDIT JOB MODAL ---
   void _openEditJobModal(Map<String, dynamic> job, bool isDark, [BuildContext? sheetCtx]) {
+    final jobNoCtrl = TextEditingController(text: job['job_no'] ?? '');
     final clientCtrl = TextEditingController(text: job['client'] ?? '');
     final itemOrPanelCtrl = TextEditingController(text: job['panel_type'] ?? '');
-    final specsCtrl = TextEditingController(text: job['specs_detail'] ?? '');
-    final priceCtrl = TextEditingController(text: (job['invoice_amount'] ?? job['quotation_amount'] ?? '').toString());
+    final rawSpecs = (job['specs_detail'] ?? '').toString();
+    final currentQuoteNo = _extractQuoteNo(rawSpecs);
+    final cleanSpecs = rawSpecs.replaceAll(RegExp(r'\[QUOTE:.*?\]'), '').replaceAll(RegExp(r'\[PO:.*?\]'), '').trim();
+
+    final quoteNoCtrl = TextEditingController(text: currentQuoteNo);
+    final specsCtrl = TextEditingController(text: cleanSpecs);
+    final quotePriceCtrl = TextEditingController(text: (job['quotation_amount'] ?? '').toString());
+    final poPriceCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
     final poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
+    final targetDateCtrl = TextEditingController(text: job['target_date'] ?? '');
     bool isSaving = false;
     String? localError;
 
@@ -146,7 +163,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text("Edit ${job['job_no']}", style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800)),
+                        Text("Edit Job Details", style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800)),
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           icon: Icon(Icons.close_rounded, color: subTextColor, size: 20),
@@ -162,13 +179,37 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
                         child: Text(localError!, style: const TextStyle(color: Colors.red, fontSize: 11)),
                       ),
+                    _buildModalField("Job Card Number *", "e.g. JOB-2026-101", jobNoCtrl, isDark),
+                    const SizedBox(height: 8),
                     _buildModalField("Client / Company Name", "Client", clientCtrl, isDark),
                     const SizedBox(height: 8),
                     _buildModalField("Item / Panel Specifications", "Specification", itemOrPanelCtrl, isDark),
                     const SizedBox(height: 8),
-                    _buildModalField("PO Number (if available)", "PO Number", poNumberCtrl, isDark),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildModalField("Quotation Number", "e.g. QT-2026-89", quoteNoCtrl, isDark),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildModalField("PO Number", "e.g. PO/2026/894", poNumberCtrl, isDark),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
-                    _buildModalField("Amount / Value (₹)", "e.g. 50000", priceCtrl, isDark, keyboard: TextInputType.number),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildModalField("Quoted Price (₹)", "e.g. 20000", quotePriceCtrl, isDark, keyboard: TextInputType.number),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildModalField("Final / PO Price (₹)", "e.g. 15000", poPriceCtrl, isDark, keyboard: TextInputType.number),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    _buildModalField("Target Delivery Date", "e.g. 25 Oct 2026", targetDateCtrl, isDark),
                     const SizedBox(height: 8),
                     _buildModalField("Scope of Work / Spares", "Scope of work", specsCtrl, isDark),
                     const SizedBox(height: 14),
@@ -178,17 +219,37 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
                         onPressed: isSaving ? null : () async {
+                          if (jobNoCtrl.text.trim().isEmpty) {
+                            setEditState(() => localError = "Job Card Number cannot be empty!");
+                            return;
+                          }
+
                           setEditState(() {
                             isSaving = true;
                             localError = null;
                           });
                           try {
+                            String newSpecs = specsCtrl.text.trim();
+                            if (quoteNoCtrl.text.trim().isNotEmpty) {
+                              newSpecs = "$newSpecs [QUOTE: ${quoteNoCtrl.text.trim()}]".trim();
+                            }
+                            if (poNumberCtrl.text.trim().isNotEmpty) {
+                              newSpecs = "$newSpecs [PO: ${poNumberCtrl.text.trim()}]".trim();
+                            }
+
                             final Map<String, dynamic> updateData = {
+                              'job_no': jobNoCtrl.text.trim(),
                               'client': clientCtrl.text.trim(),
                               'panel_type': itemOrPanelCtrl.text.trim(),
-                              'quotation_amount': priceCtrl.text.trim(),
-                              'specs_detail': specsCtrl.text.trim(),
+                              'quotation_amount': quotePriceCtrl.text.trim(),
+                              'specs_detail': newSpecs,
                             };
+                            if (targetDateCtrl.text.trim().isNotEmpty) {
+                              updateData['target_date'] = targetDateCtrl.text.trim();
+                            }
+                            if (poPriceCtrl.text.trim().isNotEmpty) {
+                              updateData['invoice_amount'] = poPriceCtrl.text.trim();
+                            }
                             if (poNumberCtrl.text.trim().isNotEmpty) {
                               updateData['po_number'] = poNumberCtrl.text.trim();
                             }
@@ -203,7 +264,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           } catch (e) {
                             setEditState(() {
                               isSaving = false;
-                              localError = "Update nahi ho saka: $e";
+                              localError = "Failed to update: $e";
                             });
                           }
                         },
@@ -222,20 +283,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // =========================================================================
-  // --- PIPELINE THROUGHPUT ENGINE: (MONTHLY BAR GRAPH + THROUGHPUT MODAL) ---
-  // =========================================================================
+  // --- MONTHLY GRAPH MODAL ---
   void _openMonthlyGraphModal(String categoryLabel, Color themeColor, bool isDark) {
     final now = DateTime.now();
     int selectedMonthIndex = now.month - 1;
     final currentYear = now.year.toString();
 
     final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
     final upperCat = categoryLabel.toUpperCase().trim();
 
-    // --- PIPELINE LIFECYCLE FILTERING ---
-    // Agar panel Testing ya Dispatch ho chuka hai, toh woh Running se hamesha count hoga!
     List<Map<String, dynamic>> categoryJobs = _jobCards.where((j) {
       final st = (j['status'] ?? '').toString().toUpperCase();
       final po = (j['po_number'] ?? '').toString().trim();
@@ -246,12 +302,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       } else if (upperCat == "PO REC'D" || upperCat == "PO" || upperCat == "PO_RECEIVED") {
         return po.isNotEmpty || specs.contains("PO:");
       } else if (upperCat == 'QUOTE' || upperCat == 'QUOTATION') {
-        return true; // Har banne wala panel quotation stage se guzarta hai
+        return true;
       } else if (upperCat == 'RUNNING') {
-        // Running me woh sab aayenge jo RUNNING hain ya aage badh chuke hain (TESTING, COMPLETED, BILLING, DISPATCHED)
         return st == 'RUNNING' || st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
       } else if (upperCat == 'TESTING') {
-        // Testing me woh sab aayenge jo TESTING me hain ya aage badh chuke hain (COMPLETED, BILLING, DISPATCHED)
         return st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
       } else if (upperCat == 'READY' || upperCat == 'COMPLETED') {
         return st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
@@ -346,7 +400,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Divider(color: borderClr),
                   const SizedBox(height: 8),
 
-                  // 12 MONTHS BARS CONTAINER
                   Container(
                     height: 175,
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
@@ -457,7 +510,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Text("Pipeline Orders in $selMonthName:", style: TextStyle(color: secondaryText, fontSize: 11, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
 
-                  // DETAILED JOB LISTING WITH EDIT AND DELETE
                   Expanded(
                     child: selJobs.isEmpty
                         ? Center(
@@ -570,19 +622,23 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- 1. NEW JOB MODAL ---
+  // --- NEW JOB MODAL WITH EDITABLE JOB NUMBER & QUOTE NUMBER ---
   void _openNewJobModal(bool isDark) {
     final now = DateTime.now();
     DateTime startDateTime = now;
     DateTime targetDateTime = now.add(const Duration(days: 14));
     DateTime poDateTime = now;
 
+    final defaultJobNo = "JOB-${now.year}-${100 + _jobCards.length + 1}";
+    final jobNoCtrl = TextEditingController(text: defaultJobNo);
     final clientCtrl = TextEditingController();
     final itemOrPanelCtrl = TextEditingController();
     final qtyCtrl = TextEditingController(text: "1");
+    final quoteNumberCtrl = TextEditingController(text: "QT-${now.year}-${100 + _jobCards.length + 1}");
     final poNumberCtrl = TextEditingController();
     final specsCtrl = TextEditingController();
-    final priceCtrl = TextEditingController();
+    final quotePriceCtrl = TextEditingController();
+    final poPriceCtrl = TextEditingController();
 
     String jobNature = 'PANEL';
     String jobCategory = 'QUOTATION';
@@ -713,7 +769,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           child: GestureDetector(
                             onTap: () {
                               if (!hasPo) {
-                                setModalState(() => localError = "Direct Running ke liye pehle PO enable karke number dalein!");
+                                setModalState(() => localError = "Enable PO and specify the PO Number and Value before proceeding to Running!");
                                 return;
                               }
                               setModalState(() {
@@ -750,6 +806,20 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ],
                     ),
                     const SizedBox(height: 10),
+
+                    // JOB NUMBER & QUOTATION NUMBER ROW
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildModalField("Job Number *", "e.g. JOB-2026-101", jobNoCtrl, isDark),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildModalField("Quotation Reference *", "e.g. QT-2026-101", quoteNumberCtrl, isDark),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
 
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -825,7 +895,18 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
                     _buildModalField("Scope of Work / Spares", "e.g. Wiring, Programming, Busbar sizing", specsCtrl, isDark),
                     const SizedBox(height: 8),
-                    _buildModalField("Price / PO Value (₹)", "e.g. 150000", priceCtrl, isDark, keyboard: TextInputType.number),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildModalField("Quoted Price (₹) *", "e.g. 20000", quotePriceCtrl, isDark, keyboard: TextInputType.number),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildModalField(hasPo ? "PO Amount (₹) *" : "PO Amount (if any)", "e.g. 15000", poPriceCtrl, isDark, keyboard: TextInputType.number),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
 
                     Row(
@@ -847,13 +928,18 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE88226)),
                         onPressed: isSaving ? null : () async {
+                          if (jobNoCtrl.text.trim().isEmpty) {
+                            setModalState(() => localError = "Job Card Number is required!");
+                            return;
+                          }
+
                           if (clientCtrl.text.trim().isEmpty || itemOrPanelCtrl.text.trim().isEmpty) {
-                            setModalState(() => localError = "Client name aur Item/Panel detail bharna zaroori hai!");
+                            setModalState(() => localError = "Client Name and Item/Panel specification are required!");
                             return;
                           }
 
                           if (jobCategory == 'RUNNING' && (!hasPo || poNumberCtrl.text.trim().isEmpty)) {
-                            setModalState(() => localError = "PO Number ke bina Job Running mein nahi ja sakta!");
+                            setModalState(() => localError = "PO Number is mandatory to move the job to Running stage!");
                             return;
                           }
 
@@ -864,17 +950,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
                           final String typeTag = jobNature == 'ITEM' ? "[ITEM: ${qtyCtrl.text.trim()} Nos] " : "[PANEL] ";
                           final String fullDesc = "$typeTag${itemOrPanelCtrl.text.trim()}";
-                          final newJobNo = "JOB-${now.year}-${100 + _jobCards.length + 1}";
+                          final finalJobNo = jobNoCtrl.text.trim();
 
+                          final quoteTag = quoteNumberCtrl.text.trim().isNotEmpty ? " [QUOTE: ${quoteNumberCtrl.text.trim()}]" : "";
                           final poDetailsStr = hasPo ? " [PO: ${poNumberCtrl.text.trim()} | Date: ${_formatDate(poDateTime)}]" : "";
-                          final String finalSpecs = "${specsCtrl.text.trim()}$poDetailsStr".trim();
+                          final String finalSpecs = "${specsCtrl.text.trim()}$quoteTag$poDetailsStr".trim();
 
                           final Map<String, dynamic> insertPayload = {
-                            'job_no': newJobNo,
+                            'job_no': finalJobNo,
                             'client': clientCtrl.text.trim(),
                             'panel_type': fullDesc,
                             'specs_detail': finalSpecs,
-                            'quotation_amount': priceCtrl.text.trim(),
+                            'quotation_amount': quotePriceCtrl.text.trim(),
+                            'invoice_amount': poPriceCtrl.text.trim().isNotEmpty ? poPriceCtrl.text.trim() : null,
                             'stage': jobCategory == 'QUOTATION'
                                 ? 'Quotation / Commercial Review'
                                 : (jobNature == 'ITEM' ? 'Testing & Servicing Stage' : 'Fabrication & Layout Stage'),
@@ -968,13 +1056,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- 2. PIPELINE STATUS ACTION MODAL ---
+  // --- WORKFLOW ACTION MODAL ---
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
-    final reasonCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController(text: job['pending_reason'] ?? '');
     final poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
+    final poAmtCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
     final invoiceNoCtrl = TextEditingController(text: job['invoice_no'] ?? 'INV-');
-    final invoiceAmtCtrl = TextEditingController(text: job['invoice_amount'] ?? job['quotation_amount'] ?? '');
+    final invoiceAmtCtrl = TextEditingController(text: (job['invoice_amount'] ?? job['quotation_amount'] ?? '').toString());
     final vehicleCtrl = TextEditingController(text: job['dispatch_vehicle'] ?? '');
 
     final Color dialogBg = isDark ? const Color(0xFF0C2232) : Colors.white;
@@ -986,6 +1075,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     bool hvTestOk = true;
     bool plcLogicOk = true;
     bool dressingOk = true;
+    bool drawingOk = true; // NEW: ELECTRICAL DRAWING OK
 
     showDialog(
       context: context,
@@ -1026,14 +1116,29 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ),
                     const SizedBox(height: 10),
 
+                    // 1. QUOTATION STAGE
                     if (status == 'QUOTATION') ...[
-                      Text("Client PO Number Required:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                      Text("Client PO Details:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
                       TextField(
                         controller: poNumberCtrl,
                         style: TextStyle(color: textColor, fontSize: 12),
                         decoration: InputDecoration(
                           hintText: "Enter PO Number (e.g. PO/2026/894)",
+                          hintStyle: TextStyle(color: subTextColor, fontSize: 11),
+                          filled: true,
+                          fillColor: fieldBg,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: poAmtCtrl,
+                        keyboardType: TextInputType.number,
+                        style: TextStyle(color: textColor, fontSize: 12),
+                        decoration: InputDecoration(
+                          hintText: "Final PO Amount (₹) (e.g. 15000)",
                           hintStyle: TextStyle(color: subTextColor, fontSize: 11),
                           filled: true,
                           fillColor: fieldBg,
@@ -1051,11 +1156,35 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           label: const Text("Verify PO & Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
                             if (poNumberCtrl.text.trim().isEmpty) return;
-                            await _updateJobStatus(job['id'], {
+                            final Map<String, dynamic> upFields = {
                               'status': 'RUNNING',
                               'stage': 'Fabrication & Layout Stage',
                               'po_number': poNumberCtrl.text.trim(),
                               'progress': 0.25,
+                            };
+                            if (poAmtCtrl.text.trim().isNotEmpty) {
+                              upFields['invoice_amount'] = poAmtCtrl.text.trim();
+                            }
+                            await _updateJobStatus(job['id'], upFields);
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 34,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                          ),
+                          icon: const Icon(Icons.cancel_outlined, size: 15),
+                          label: const Text("Cancel Quotation", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          onPressed: () async {
+                            await _updateJobStatus(job['id'], {
+                              'status': 'CANCELLED',
+                              'stage': 'Quotation Rejected / Cancelled',
                             });
                             Navigator.pop(ctx);
                           },
@@ -1063,6 +1192,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ),
                     ],
 
+                    // 2. RUNNING STAGE
                     if (status == 'RUNNING') ...[
                       Text("Update Stage Progress:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
@@ -1099,7 +1229,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         controller: reasonCtrl,
                         style: TextStyle(color: textColor, fontSize: 11.5),
                         decoration: InputDecoration(
-                          hintText: "Hold reason (Waiting for spares / drawings)",
+                          hintText: "Hold / Cancellation reason",
                           hintStyle: TextStyle(color: subTextColor, fontSize: 10.5),
                           filled: true,
                           fillColor: fieldBg,
@@ -1108,19 +1238,107 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                       const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 34,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB45309)),
+                                icon: const Icon(Icons.pause_circle_outline_rounded, color: Colors.white, size: 15),
+                                label: const Text("Hold (Pending)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10.5)),
+                                onPressed: () async {
+                                  final r = reasonCtrl.text.trim();
+                                  await _updateJobStatus(job['id'], {
+                                    'status': 'PENDING',
+                                    'stage': r.isNotEmpty ? 'On Hold: $r' : 'On Hold (Pending)',
+                                    'pending_reason': r,
+                                  });
+                                  Navigator.pop(ctx);
+                                },
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SizedBox(
+                              height: 34,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+                                icon: const Icon(Icons.cancel_outlined, color: Colors.white, size: 15),
+                                label: const Text("Cancel Order", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10.5)),
+                                onPressed: () async {
+                                  final r = reasonCtrl.text.trim();
+                                  await _updateJobStatus(job['id'], {
+                                    'status': 'CANCELLED',
+                                    'stage': r.isNotEmpty ? 'Cancelled: $r' : 'Order Cancelled',
+                                    'pending_reason': r,
+                                  });
+                                  Navigator.pop(ctx);
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+
+                    // 3. PENDING STAGE
+                    if (status == 'PENDING') ...[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD97706).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFD97706).withOpacity(0.4)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline, size: 16, color: Color(0xFFD97706)),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                job['pending_reason'] != null && job['pending_reason'].toString().isNotEmpty
+                                    ? "Reason: ${job['pending_reason']}"
+                                    : "Job is currently on hold. Move back to Running or Cancel the order.",
+                                style: const TextStyle(color: Color(0xFFD97706), fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text("Pending Decision Action:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
-                        height: 34,
+                        height: 38,
                         child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB45309)),
-                          icon: const Icon(Icons.pause_circle_outline_rounded, color: Colors.white, size: 15),
-                          label: const Text("Put on Hold (Pending)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11)),
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                          icon: const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 17),
+                          label: const Text("Resume Work ➔ Back to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
-                            if (reasonCtrl.text.trim().isEmpty) return;
                             await _updateJobStatus(job['id'], {
-                              'status': 'PENDING',
-                              'stage': 'On Hold: ${reasonCtrl.text.trim()}',
-                              'pending_reason': reasonCtrl.text.trim(),
+                              'status': 'RUNNING',
+                              'stage': 'Work Resumed (Active Production)',
+                              'pending_reason': null,
+                            });
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 38,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
+                          icon: const Icon(Icons.cancel_rounded, color: Colors.white, size: 17),
+                          label: const Text("Drop Order ➔ Mark CANCELLED", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
+                          onPressed: () async {
+                            await _updateJobStatus(job['id'], {
+                              'status': 'CANCELLED',
+                              'stage': 'Order Cancelled from Pending',
                             });
                             Navigator.pop(ctx);
                           },
@@ -1128,8 +1346,18 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ),
                     ],
 
+                    // 4. TESTING STAGE (QC CHECKLIST WITH ELECTRICAL DRAWING)
                     if (status == 'TESTING') ...[
                       const Text("Factory QC Checklist:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        activeColor: const Color(0xFF10B981),
+                        title: Text("Electrical Wiring Drawing & Schematic OK", style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w700)),
+                        subtitle: Text("Busbar size, wire tags, terminal numbers matched", style: TextStyle(color: subTextColor, fontSize: 9.5)),
+                        value: drawingOk,
+                        onChanged: (v) => setDialogState(() => drawingOk = v ?? false),
+                      ),
                       CheckboxListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
@@ -1162,11 +1390,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
                           icon: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 17),
                           label: const Text("QC Passed ➔ Mark COMPLETED", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
-                          onPressed: (hvTestOk && plcLogicOk && dressingOk)
+                          onPressed: (drawingOk && hvTestOk && plcLogicOk && dressingOk)
                               ? () async {
                                   await _updateJobStatus(job['id'], {
                                     'status': 'COMPLETED',
-                                    'stage': 'QC Passed & Ready for Billing',
+                                    'stage': 'Drawing & QC Passed, Ready for Billing',
                                     'progress': 0.90,
                                   });
                                   Navigator.pop(ctx);
@@ -1174,8 +1402,26 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               : null,
                         ),
                       ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 32,
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(foregroundColor: Colors.red),
+                          icon: const Icon(Icons.cancel_outlined, size: 15),
+                          label: const Text("Cancel Order from Testing", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          onPressed: () async {
+                            await _updateJobStatus(job['id'], {
+                              'status': 'CANCELLED',
+                              'stage': 'Cancelled during testing',
+                            });
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                      ),
                     ],
 
+                    // 5. COMPLETED / BILLING STAGE
                     if (status == 'COMPLETED' || status == 'BILLING') ...[
                       TextField(
                         controller: invoiceNoCtrl,
@@ -1233,6 +1479,30 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'invoice_no': invoiceNoCtrl.text.trim(),
                               'invoice_amount': invoiceAmtCtrl.text.trim(),
                               'dispatch_vehicle': vehicleCtrl.text.trim(),
+                            });
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                      ),
+                    ],
+
+                    // 6. CANCELLED STAGE
+                    if (status == 'CANCELLED') ...[
+                      const Text("Order Status: CANCELLED", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 6),
+                      Text("This order has been cancelled. To resume, reopen the order below:", style: TextStyle(color: subTextColor, fontSize: 11)),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 38,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                          icon: const Icon(Icons.restore_rounded, color: Colors.white, size: 16),
+                          label: const Text("Re-Open Order ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
+                          onPressed: () async {
+                            await _updateJobStatus(job['id'], {
+                              'status': 'RUNNING',
+                              'stage': 'Order Re-opened for production',
                             });
                             Navigator.pop(ctx);
                           },
@@ -1316,7 +1586,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    // Current Active Shop-Floor counts (Live status)
     final quotationCount = _jobCards.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'QUOTATION').length;
     final pendingCount = _jobCards.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'PENDING').length;
     final runningCount = _jobCards.where((j) => (j['status'] ?? '').toString().toUpperCase() == 'RUNNING').length;
@@ -1351,12 +1620,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       final jobNo = (j['job_no'] ?? '').toString().toLowerCase();
       final panelType = (j['panel_type'] ?? '').toString().toLowerCase();
       final poNoStr = (poNoVal ?? '').toString().toLowerCase();
+      final quoteNoStr = _extractQuoteNo(specs).toLowerCase();
 
       final matchesSearch = _searchQuery.isEmpty ||
           client.contains(_searchQuery) ||
           jobNo.contains(_searchQuery) ||
           panelType.contains(_searchQuery) ||
-          poNoStr.contains(_searchQuery);
+          poNoStr.contains(_searchQuery) ||
+          quoteNoStr.contains(_searchQuery);
 
       return matchesTab && matchesSearch;
     }).toList();
@@ -1402,7 +1673,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             });
                           },
                         ),
-                        hintText: "Search Job #, PO #, Client...",
+                        hintText: "Search Job #, PO #, Quote #...",
                         hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(vertical: 9),
@@ -1414,7 +1685,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: Image.asset('assets/images/nextgen_logo.jpeg', width: 34, height: 34, fit: BoxFit.contain),
+                        child: Image.asset('assets/images/nextgen_logo_1.jpg', width: 34, height: 34, fit: BoxFit.contain),
                       ),
                       const SizedBox(width: 8),
                       Column(
@@ -1456,7 +1727,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFFE88226)))
                 : Column(
                     children: [
-                      // TOP 9 METRIC TILES
+                      // TOP 9 TILES
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                         child: Column(
@@ -1490,7 +1761,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
 
-                      // HORIZONTAL STATUS FILTER CHIPS
+                      // HORIZONTAL CHIPS
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
                         child: SingleChildScrollView(
@@ -1520,7 +1791,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
 
-                      // INDUSTRIAL JOB CARDS
                       Expanded(
                         child: filteredJobs.isEmpty
                             ? ListView(
@@ -1615,10 +1885,13 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
+  // --- INDUSTRIAL CARD WITH JOB NO, QUOTE NO, PO NO, START & TARGET DATES ---
   Widget _buildCrispIndustrialCard(Map<String, dynamic> job, bool isDark) {
     final statusStr = (job['status'] ?? '').toString().toUpperCase();
     final String? poNumber = job['po_number'];
     final String specsStr = (job['specs_detail'] ?? '').toString();
+    final String quoteNo = _extractQuoteNo(specsStr);
+    final String jobNo = (job['job_no'] ?? '').toString().trim();
 
     Color statusColor;
     switch (statusStr) {
@@ -1655,6 +1928,22 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final rawDesc = (job['panel_type'] ?? '').toString();
     final bool isItem = rawDesc.contains('[ITEM:');
 
+    // QUOTE VS PO VARIANCE
+    final quoteStr = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
+    final poStr = (job['invoice_amount'] ?? '').toString().replaceAll(',', '').trim();
+    final double? quoteVal = double.tryParse(quoteStr);
+    final double? poVal = double.tryParse(poStr);
+
+    double? diffVal;
+    double? diffPercent;
+    if (quoteVal != null && quoteVal > 0 && poVal != null && poVal > 0) {
+      diffVal = poVal - quoteVal;
+      diffPercent = ((poVal - quoteVal) / quoteVal) * 100;
+    }
+
+    final String startDateStr = (job['start_date'] ?? '-').toString().trim();
+    final String targetDateStr = (job['target_date'] ?? '-').toString().trim();
+
     return GestureDetector(
       onTap: () => _openStatusActionModal(job, isDark),
       child: Container(
@@ -1678,49 +1967,94 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      job['job_no'] ?? '',
-                      style: TextStyle(
-                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
-                        fontWeight: FontWeight.w900,
-                        fontSize: 12.5,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
+                Expanded(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      // 1. DISTINCT JOB NUMBER BADGE
+                      if (jobNo.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0284C7).withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF38BDF8).withOpacity(0.6), width: 1.1),
+                          ),
+                          child: Text(
+                            jobNo.startsWith("JOB") ? jobNo : "JOB: $jobNo",
+                            style: const TextStyle(
+                              color: Color(0xFF38BDF8),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                        ),
 
-                    if ((poNumber != null && poNumber.isNotEmpty) || specsStr.contains("PO:"))
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF10B981).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5)),
+                      // 2. QUOTATION NUMBER BADGE (QT)
+                      if (quoteNo.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF8B5CF6).withOpacity(0.6), width: 1.1),
+                          ),
+                          child: Text(
+                            quoteNo.startsWith("QT") ? quoteNo : "QT: $quoteNo",
+                            style: const TextStyle(
+                              color: Color(0xFFA78BFA),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          poNumber != null && poNumber.isNotEmpty ? "PO: $poNumber" : "PO RECEIVED",
-                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 9, fontWeight: FontWeight.w900),
+
+                      // 3. PO BADGE
+                      if ((poNumber != null && poNumber.isNotEmpty) || specsStr.contains("PO:"))
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.6), width: 1.1),
+                          ),
+                          child: Text(
+                            poNumber != null && poNumber.isNotEmpty ? "PO: $poNumber" : "PO REC'D",
+                            style: const TextStyle(
+                              color: Color(0xFF10B981),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        )
+                      else if (quoteNo.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF8B5CF6).withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text("NO PO / QUOTE", style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 8.5, fontWeight: FontWeight.bold)),
                         ),
-                      )
-                    else
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(color: const Color(0xFF8B5CF6).withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
-                        child: const Text("NO PO / QUOTE", style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 8.5, fontWeight: FontWeight.bold)),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
 
+                const SizedBox(width: 6),
+
+                // STATUS PILL
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
                   decoration: BoxDecoration(
                     color: statusColor.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: statusColor.withOpacity(0.7)),
                   ),
                   child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(width: 5, height: 5, decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
                       const SizedBox(width: 5),
@@ -1732,16 +2066,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
 
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(child: Text(job['client'] ?? '', style: TextStyle(color: titleC, fontSize: 13.5, fontWeight: FontWeight.w800))),
-                if (job['invoice_amount'] != null && job['invoice_amount'].toString().isNotEmpty)
-                  Text("₹${job['invoice_amount']}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 13, fontWeight: FontWeight.w900))
-                else if (job['quotation_amount'] != null && job['quotation_amount'].toString().isNotEmpty)
-                  Text("₹${job['quotation_amount']}", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7), fontSize: 12.5, fontWeight: FontWeight.w800)),
+                if (poVal != null && poVal > 0)
+                  Text("PO: ₹${poVal.toStringAsFixed(0)}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 13, fontWeight: FontWeight.w900))
+                else if (quoteVal != null && quoteVal > 0)
+                  Text("Quoted: ₹${quoteVal.toStringAsFixed(0)}", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7), fontSize: 12.5, fontWeight: FontWeight.w800)),
               ],
             ),
             const SizedBox(height: 3),
@@ -1768,6 +2102,43 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               ],
             ),
 
+            if (diffVal != null) ...[
+              const SizedBox(height: 7),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: diffVal < 0
+                      ? const Color(0xFFEF4444).withOpacity(0.12)
+                      : (diffVal > 0 ? const Color(0xFF10B981).withOpacity(0.12) : const Color(0xFF0284C7).withOpacity(0.12)),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: diffVal < 0
+                        ? const Color(0xFFEF4444).withOpacity(0.4)
+                        : (diffVal > 0 ? const Color(0xFF10B981).withOpacity(0.4) : const Color(0xFF0284C7).withOpacity(0.4)),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Quoted: ₹${quoteVal!.toStringAsFixed(0)} ➔ PO: ₹${poVal!.toStringAsFixed(0)}",
+                      style: TextStyle(color: titleC, fontSize: 10, fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      diffVal < 0
+                          ? "-₹${(-diffVal).toStringAsFixed(0)} (${diffPercent!.abs().toStringAsFixed(1)}% Cut)"
+                          : (diffVal > 0 ? "+₹${diffVal.toStringAsFixed(0)} (+${diffPercent!.toStringAsFixed(1)}%)" : "0 Diff (Exact Match)"),
+                      style: TextStyle(
+                        color: diffVal < 0 ? const Color(0xFFEF4444) : (diffVal > 0 ? const Color(0xFF10B981) : const Color(0xFF0284C7)),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 8),
 
             Row(
@@ -1792,10 +2163,29 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             Divider(color: borderC, height: 1),
             const SizedBox(height: 6),
 
+            // DATES ROW: START DATE & TARGET DELIVERY DATE
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text("Start: ${job['start_date'] ?? '-'}", style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(Icons.play_arrow_rounded, size: 12, color: subC),
+                      const SizedBox(width: 2),
+                      Text("Start: $startDateStr", style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 8),
+                      Icon(Icons.flag_rounded, size: 11, color: const Color(0xFFE88226)),
+                      const SizedBox(width: 2),
+                      Flexible(
+                        child: Text(
+                          "Target: $targetDateStr",
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFFE88226), fontSize: 9.5, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 Row(
                   children: [
                     InkWell(

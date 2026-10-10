@@ -29,14 +29,14 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/images/nextgen_logo.jpeg"
+  image_path: "assets/images/nextgen_logo_1.jpg"
   min_sdk_android: 21
   adaptive_icon_background: "#07121A"
-  adaptive_icon_foreground: "assets/images/nextgen_logo.jpeg"
-  adaptive_icon_padding: 24
+  adaptive_icon_foreground: "assets/images/nextgen_logo_1.jpg"
+  adaptive_icon_foreground_inset: 22
 
 flutter:
+  uses-material-design: true
+
   assets:
     - assets/images/
-
-  uses-material-design: true
