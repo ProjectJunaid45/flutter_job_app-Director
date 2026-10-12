@@ -36,7 +36,6 @@ class WelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Screen width check taaki mobile aur laptop dono automatically perfect set rahein
     final screenWidth = MediaQuery.of(context).size.width;
     final bool isDesktop = screenWidth > 700;
 
@@ -186,7 +185,6 @@ class WelcomeScreen extends StatelessWidget {
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisSpacing: isDesktop ? 12 : 9,
                     mainAxisSpacing: isDesktop ? 10 : 9,
-                    // Mobile par original 1.40 ratio rahega taaki text na kate, Laptop par wide ratio
                     childAspectRatio: isDesktop ? 3.0 : 1.40,
                     children: [
                       _buildLargeMatrixCard(
@@ -266,7 +264,7 @@ class WelcomeScreen extends StatelessWidget {
 
                 const SizedBox(height: 7),
 
-                // 5. CONTACT CONTAINER (MOBILE ME 2-LINE, DESKTOP ME 1-LINE)
+                // 5. CONTACT CONTAINER
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),

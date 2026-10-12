@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   gtk
   printing
+  restart_app
   url_launcher_linux
 )
 

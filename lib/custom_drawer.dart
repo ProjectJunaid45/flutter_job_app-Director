@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'annual_analytics_screen.dart';
 import 'sing_in.dart';
@@ -27,20 +28,39 @@ class CustomDrawer extends StatefulWidget {
 
 class _CustomDrawerState extends State<CustomDrawer> {
   String _operatorName = "JUNAID";
+  final ShorebirdUpdater _shorebirdUpdater = ShorebirdUpdater();
+  int _appPatchVersion = 1;
 
   @override
   void initState() {
     super.initState();
     _loadOperatorName();
+    _loadShorebirdVersion();
   }
 
   Future<void> _loadOperatorName() async {
     final prefs = await SharedPreferences.getInstance();
     final savedUser = prefs.getString('logged_operator_username');
     if (savedUser != null && savedUser.trim().isNotEmpty) {
-      setState(() {
-        _operatorName = savedUser.toUpperCase();
-      });
+      if (mounted) {
+        setState(() {
+          _operatorName = savedUser.toUpperCase();
+        });
+      }
+    }
+  }
+
+  Future<void> _loadShorebirdVersion() async {
+    try {
+      final patch = await _shorebirdUpdater.readCurrentPatch();
+      if (patch != null && mounted) {
+        setState(() {
+          // Base build = v1, Patch 1 = v2, Patch 2 = v3 ...
+          _appPatchVersion = 1 + patch.number;
+        });
+      }
+    } catch (_) {
+      // Offline ya desktop fallback ke liye default v1 rahega
     }
   }
 
@@ -480,7 +500,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: dynamic_spaceBetween(),
                       children: [
                         Row(
                           children: const [
@@ -744,6 +764,8 @@ class _CustomDrawerState extends State<CustomDrawer> {
     );
   }
 
+  static MainAxisAlignment dynamic_spaceBetween() => MainAxisAlignment.spaceBetween;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<bool>(
@@ -974,7 +996,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                   ),
                 ),
 
-                // 3. LOGOUT & FOOTER
+                // 3. LOGOUT & FOOTER (DYNAMIC VERSION)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
                   decoration: BoxDecoration(
@@ -1021,7 +1043,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        "NEXTGEN OS • v2.4.0 (Industrial Edition)",
+                        "NEXTGEN OS • v$_appPatchVersion (Industrial Edition)",
                         style: TextStyle(
                           color: subColor,
                           fontSize: 9,
