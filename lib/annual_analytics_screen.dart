@@ -282,7 +282,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 1. ACCURATE COMMERCIAL AUDIT CARD ---
+                      // --- 1. ACCURATE COMMERCIAL AUDIT CARD (OVERFLOW FIXED) ---
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -294,14 +294,19 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Text(
-                                  "FY $_selectedYear Quoted vs PO Audit",
-                                  style: TextStyle(color: textMain, fontSize: 13.5, fontWeight: FontWeight.w900),
+                                Expanded(
+                                  child: Text(
+                                    "FY $_selectedYear Quoted vs PO Audit",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: textMain, fontSize: 13, fontWeight: FontWeight.w900),
+                                  ),
                                 ),
+                                const SizedBox(width: 8),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                                   decoration: BoxDecoration(
                                     color: isZeroDiff
                                         ? const Color(0xFF0284C7).withOpacity(0.15)
@@ -312,13 +317,13 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                                     isZeroDiff
                                         ? "Exact Match (0 Diff)"
                                         : (yearlyVariance < 0
-                                            ? "-${formatIndianCurrency(yearlyVariance.abs())} (${variancePercent.abs().toStringAsFixed(1)}% Cut)"
-                                            : "+${formatIndianCurrency(yearlyVariance)} (+${variancePercent.toStringAsFixed(1)}% Gain)"),
+                                            ? "-${formatIndianCurrency(yearlyVariance.abs())} (${variancePercent.abs().toStringAsFixed(1)}%)"
+                                            : "+${formatIndianCurrency(yearlyVariance)} (+${variancePercent.toStringAsFixed(1)}%)"),
                                     style: TextStyle(
                                       color: isZeroDiff
                                           ? const Color(0xFF0284C7)
                                           : (yearlyVariance < 0 ? const Color(0xFFEF4444) : const Color(0xFF10B981)),
-                                      fontSize: 10.5,
+                                      fontSize: 10,
                                       fontWeight: FontWeight.w900,
                                     ),
                                   ),
@@ -392,7 +397,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 3. STAGES BREAKDOWN CARDS (Quotes, PO, Running, Pending, Testing, Dispatch) ---
+                      // --- 3. STAGES BREAKDOWN CARDS ---
                       ...stages.map((stage) {
                         final int baseTotal = pieTotal > 0 ? pieTotal : (totalCount > 0 ? totalCount : 1);
                         final double pct = (stage.count / baseTotal) * 100;

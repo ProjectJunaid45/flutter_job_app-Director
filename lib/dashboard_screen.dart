@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'custom_drawer.dart';
 
@@ -18,10 +19,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   List<Map<String, dynamic>> _jobCards = [];
   bool _isLoading = true;
+  String _currentOperator = 'JUNAID';
 
   @override
   void initState() {
     super.initState();
+    _loadCurrentOperator();
     _fetchJobCards();
   }
 
@@ -29,6 +32,18 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCurrentOperator() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedUser = prefs.getString('logged_operator_username');
+      if (savedUser != null && savedUser.trim().isNotEmpty && mounted) {
+        setState(() {
+          _currentOperator = savedUser.trim().toUpperCase();
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _fetchJobCards() async {
@@ -72,23 +87,90 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return '';
   }
 
-  // --- DELETE JOB FUNCTION ---
+  static String _extractCreatedBy(dynamic job) {
+    final dbUser = (job['created_by'] ?? '').toString().trim();
+    if (dbUser.isNotEmpty) return dbUser.toUpperCase();
+
+    final specs = (job['specs_detail'] ?? '').toString();
+    final reg = RegExp(r'\[BY:\s*(.*?)\]');
+    final match = reg.firstMatch(specs);
+    if (match != null && match.groupCount >= 1) {
+      return match.group(1)?.trim().toUpperCase() ?? '';
+    }
+    return '';
+  }
+
+  List<String> _getUniqueSuggestions(String fieldKey, {bool isSpec = false}) {
+    final Set<String> results = {};
+    for (var job in _jobCards) {
+      if (isSpec) {
+        String raw = (job[fieldKey] ?? '').toString();
+        raw = raw
+            .replaceAll(RegExp(r'\[QUOTE:.*?\]'), '')
+            .replaceAll(RegExp(r'\[PO:.*?\]'), '')
+            .replaceAll(RegExp(r'\[BY:.*?\]'), '')
+            .trim();
+        if (raw.isNotEmpty) results.add(raw);
+      } else {
+        String val = (job[fieldKey] ?? '').toString();
+        if (fieldKey == 'panel_type') {
+          val = val.replaceAll('[PANEL]', '').replaceAll(RegExp(r'\[ITEM:.*?\]'), '').trim();
+        }
+        if (val.trim().isNotEmpty) {
+          results.add(val.trim());
+        }
+      }
+    }
+    return results.toList();
+  }
+
   Future<void> _deleteJob(dynamic jobId, BuildContext? sheetContext) async {
     final bool? confirm = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: const Color(0xFF0C2232),
-        title: const Text("Delete Job?", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
-        content: const Text("Are you sure you want to permanently delete this job record?", style: TextStyle(color: Colors.white70, fontSize: 13)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 22),
+            SizedBox(width: 8),
+            Text(
+              "Delete Job Record?",
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: const Text(
+          "Are you sure you want to permanently delete this job card? This action cannot be undone.",
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(dialogCtx, true),
-            child: const Text("Delete", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => Navigator.pop(dialogCtx, false),
+                  child: const Text("No", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFEF4444),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => Navigator.pop(dialogCtx, true),
+                  child: const Text("Yes", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -103,187 +185,82 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Job record deleted successfully!"), backgroundColor: Colors.green),
+            const SnackBar(content: Text("Job record permanently deleted!"), backgroundColor: Colors.green),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Delete error: $e"), backgroundColor: Colors.red),
+            SnackBar(content: Text("Delete failed: $e"), backgroundColor: Colors.red),
           );
         }
       }
     }
   }
 
-  // --- EDIT JOB MODAL ---
   void _openEditJobModal(Map<String, dynamic> job, bool isDark, [BuildContext? sheetCtx]) {
-    final jobNoCtrl = TextEditingController(text: job['job_no'] ?? '');
-    final clientCtrl = TextEditingController(text: job['client'] ?? '');
-    final itemOrPanelCtrl = TextEditingController(text: job['panel_type'] ?? '');
-    final rawSpecs = (job['specs_detail'] ?? '').toString();
-    final currentQuoteNo = _extractQuoteNo(rawSpecs);
-    final cleanSpecs = rawSpecs.replaceAll(RegExp(r'\[QUOTE:.*?\]'), '').replaceAll(RegExp(r'\[PO:.*?\]'), '').trim();
-
-    final quoteNoCtrl = TextEditingController(text: currentQuoteNo);
-    final specsCtrl = TextEditingController(text: cleanSpecs);
-    final quotePriceCtrl = TextEditingController(text: (job['quotation_amount'] ?? '').toString());
-    final poPriceCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
-    final poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
-    final targetDateCtrl = TextEditingController(text: job['target_date'] ?? '');
-    bool isSaving = false;
-    String? localError;
-
-    final Color modalBg = isDark ? const Color(0xFF0C1924) : Colors.white;
-    final Color textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final Color subTextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-    final Color borderColor = isDark ? const Color(0xFF1E3A52) : const Color(0xFFCBD5E1);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: modalBg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (editCtx) {
-        return StatefulBuilder(
-          builder: (context, setEditState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(editCtx).viewInsets.bottom + 16,
-                left: 16,
-                right: 16,
-                top: 16,
-              ),
-              child: SingleChildScrollView(
-                physics: const ClampingScrollPhysics(),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text("Edit Job Details", style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800)),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: Icon(Icons.close_rounded, color: subTextColor, size: 20),
-                          onPressed: () => Navigator.pop(editCtx),
-                        ),
-                      ],
-                    ),
-                    Divider(color: borderColor),
-                    if (localError != null)
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-                        child: Text(localError!, style: const TextStyle(color: Colors.red, fontSize: 11)),
-                      ),
-                    _buildModalField("Job Card Number *", "e.g. JOB-2026-101", jobNoCtrl, isDark),
-                    const SizedBox(height: 8),
-                    _buildModalField("Client / Company Name", "Client", clientCtrl, isDark),
-                    const SizedBox(height: 8),
-                    _buildModalField("Item / Panel Specifications", "Specification", itemOrPanelCtrl, isDark),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildModalField("Quotation Number", "e.g. QT-2026-89", quoteNoCtrl, isDark),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildModalField("PO Number", "e.g. PO/2026/894", poNumberCtrl, isDark),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildModalField("Quoted Price (₹)", "e.g. 20000", quotePriceCtrl, isDark, keyboard: TextInputType.number),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildModalField("Final / PO Price (₹)", "e.g. 15000", poPriceCtrl, isDark, keyboard: TextInputType.number),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _buildModalField("Target Delivery Date", "e.g. 25 Oct 2026", targetDateCtrl, isDark),
-                    const SizedBox(height: 8),
-                    _buildModalField("Scope of Work / Spares", "Scope of work", specsCtrl, isDark),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 42,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
-                        onPressed: isSaving ? null : () async {
-                          if (jobNoCtrl.text.trim().isEmpty) {
-                            setEditState(() => localError = "Job Card Number cannot be empty!");
-                            return;
-                          }
-
-                          setEditState(() {
-                            isSaving = true;
-                            localError = null;
-                          });
-                          try {
-                            String newSpecs = specsCtrl.text.trim();
-                            if (quoteNoCtrl.text.trim().isNotEmpty) {
-                              newSpecs = "$newSpecs [QUOTE: ${quoteNoCtrl.text.trim()}]".trim();
-                            }
-                            if (poNumberCtrl.text.trim().isNotEmpty) {
-                              newSpecs = "$newSpecs [PO: ${poNumberCtrl.text.trim()}]".trim();
-                            }
-
-                            final Map<String, dynamic> updateData = {
-                              'job_no': jobNoCtrl.text.trim(),
-                              'client': clientCtrl.text.trim(),
-                              'panel_type': itemOrPanelCtrl.text.trim(),
-                              'quotation_amount': quotePriceCtrl.text.trim(),
-                              'specs_detail': newSpecs,
-                            };
-                            if (targetDateCtrl.text.trim().isNotEmpty) {
-                              updateData['target_date'] = targetDateCtrl.text.trim();
-                            }
-                            if (poPriceCtrl.text.trim().isNotEmpty) {
-                              updateData['invoice_amount'] = poPriceCtrl.text.trim();
-                            }
-                            if (poNumberCtrl.text.trim().isNotEmpty) {
-                              updateData['po_number'] = poNumberCtrl.text.trim();
-                            }
-
-                            await _supabase.from('job_cards').update(updateData).eq('id', job['id']);
-
-                            await _fetchJobCards();
-                            Navigator.pop(editCtx);
-                            if (sheetCtx != null && sheetCtx.mounted) {
-                              Navigator.pop(sheetCtx);
-                            }
-                          } catch (e) {
-                            setEditState(() {
-                              isSaving = false;
-                              localError = "Failed to update: $e";
-                            });
-                          }
-                        },
-                        child: isSaving
-                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                            : const Text("Save Changes", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => FastJobFormScreen(
+          isDark: isDark,
+          isEditMode: true,
+          initialJob: job,
+          currentOperator: _currentOperator,
+          clientSuggestions: _getUniqueSuggestions('client'),
+          panelSuggestions: _getUniqueSuggestions('panel_type'),
+          specsSuggestions: _getUniqueSuggestions('specs_detail', isSpec: true),
+          onSaved: (payload) async {
+            try {
+              await _supabase.from('job_cards').update(payload).eq('id', job['id']);
+            } catch (_) {
+              payload.remove('created_by');
+              await _supabase.from('job_cards').update(payload).eq('id', job['id']);
+            }
+            await _fetchJobCards();
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (sheetCtx != null && sheetCtx.mounted) Navigator.pop(sheetCtx);
           },
-        );
-      },
+        ),
+      ),
     );
   }
 
-  // --- MONTHLY GRAPH MODAL ---
+  void _openNewJobModal(bool isDark) {
+    final now = DateTime.now();
+    final defaultJobNo = "JOB-${now.year}-${100 + _jobCards.length + 1}";
+    final defaultQuoteNo = "QT-${now.year}-${100 + _jobCards.length + 1}";
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (ctx) => FastJobFormScreen(
+          isDark: isDark,
+          isEditMode: false,
+          defaultJobNo: defaultJobNo,
+          defaultQuoteNo: defaultQuoteNo,
+          currentOperator: _currentOperator,
+          clientSuggestions: _getUniqueSuggestions('client'),
+          panelSuggestions: _getUniqueSuggestions('panel_type'),
+          specsSuggestions: _getUniqueSuggestions('specs_detail', isSpec: true),
+          onSaved: (payload) async {
+            try {
+              await _supabase.from('job_cards').insert(payload);
+            } catch (e) {
+              payload.remove('created_by');
+              try {
+                await _supabase.from('job_cards').insert(payload);
+              } catch (e2) {
+                payload.remove('po_number');
+                await _supabase.from('job_cards').insert(payload);
+              }
+            }
+            await _fetchJobCards();
+            if (ctx.mounted) Navigator.pop(ctx);
+          },
+        ),
+      ),
+    );
+  }
+
   void _openMonthlyGraphModal(String categoryLabel, Color themeColor, bool isDark) {
     final now = DateTime.now();
     int selectedMonthIndex = now.month - 1;
@@ -399,7 +376,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   ),
                   Divider(color: borderClr),
                   const SizedBox(height: 8),
-
                   Container(
                     height: 175,
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
@@ -442,7 +418,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 ),
                               ),
                               const SizedBox(height: 4),
-
                               AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
                                 width: 17,
@@ -465,7 +440,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 ),
                               ),
                               const SizedBox(height: 6),
-
                               Text(
                                 months[index],
                                 style: TextStyle(
@@ -480,9 +454,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       }),
                     ),
                   ),
-
                   const SizedBox(height: 10),
-
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -505,11 +477,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 8),
                   Text("Pipeline Orders in $selMonthName:", style: TextStyle(color: secondaryText, fontSize: 11, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
-
                   Expanded(
                     child: selJobs.isEmpty
                         ? Center(
@@ -622,441 +592,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- NEW JOB MODAL WITH EDITABLE JOB NUMBER & QUOTE NUMBER ---
-  void _openNewJobModal(bool isDark) {
-    final now = DateTime.now();
-    DateTime startDateTime = now;
-    DateTime targetDateTime = now.add(const Duration(days: 14));
-    DateTime poDateTime = now;
-
-    final defaultJobNo = "JOB-${now.year}-${100 + _jobCards.length + 1}";
-    final jobNoCtrl = TextEditingController(text: defaultJobNo);
-    final clientCtrl = TextEditingController();
-    final itemOrPanelCtrl = TextEditingController();
-    final qtyCtrl = TextEditingController(text: "1");
-    final quoteNumberCtrl = TextEditingController(text: "QT-${now.year}-${100 + _jobCards.length + 1}");
-    final poNumberCtrl = TextEditingController();
-    final specsCtrl = TextEditingController();
-    final quotePriceCtrl = TextEditingController();
-    final poPriceCtrl = TextEditingController();
-
-    String jobNature = 'PANEL';
-    String jobCategory = 'QUOTATION';
-    bool hasPo = false;
-    bool isSaving = false;
-    String? localError;
-
-    final Color modalBg = isDark ? const Color(0xFF0C1924) : Colors.white;
-    final Color textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final Color subTextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-    final Color borderColor = isDark ? const Color(0xFF1E3A52) : const Color(0xFFCBD5E1);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      enableDrag: true,
-      backgroundColor: modalBg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
-                left: 16,
-                right: 16,
-                top: 16,
-              ),
-              child: SingleChildScrollView(
-                physics: const ClampingScrollPhysics(),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              jobNature == 'PANEL' ? "New Control Panel Job" : "New Component / Spare Job",
-                              style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800),
-                            ),
-                            Text("Industrial shop-floor registration", style: TextStyle(color: subTextColor, fontSize: 10)),
-                          ],
-                        ),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: Icon(Icons.close_rounded, color: subTextColor, size: 20),
-                          onPressed: () => Navigator.pop(ctx),
-                        ),
-                      ],
-                    ),
-                    Divider(color: borderColor),
-                    const SizedBox(height: 6),
-
-                    if (localError != null)
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        margin: const EdgeInsets.only(bottom: 8),
-                        decoration: BoxDecoration(color: Colors.red.withOpacity(0.12), borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.red.withOpacity(0.4))),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline, color: Colors.red, size: 16),
-                            const SizedBox(width: 6),
-                            Expanded(child: Text(localError!, style: const TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold))),
-                          ],
-                        ),
-                      ),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => setModalState(() => jobNature = 'PANEL'),
-                            child: Container(
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: jobNature == 'PANEL' ? const Color(0xFFE88226) : (isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: jobNature == 'PANEL' ? const Color(0xFFE88226) : borderColor),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text("Control Panel", style: TextStyle(color: jobNature == 'PANEL' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => setModalState(() => jobNature = 'ITEM'),
-                            child: Container(
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : (isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : borderColor),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text("Spare Item", style: TextStyle(color: jobNature == 'ITEM' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => setModalState(() => jobCategory = 'QUOTATION'),
-                            child: Container(
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: jobCategory == 'QUOTATION' ? const Color(0xFF8B5CF6) : Colors.transparent,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFF8B5CF6)),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text("Quotation Stage", style: TextStyle(color: jobCategory == 'QUOTATION' ? Colors.white : const Color(0xFF8B5CF6), fontWeight: FontWeight.bold, fontSize: 11.5)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () {
-                              if (!hasPo) {
-                                setModalState(() => localError = "Enable PO and specify the PO Number and Value before proceeding to Running!");
-                                return;
-                              }
-                              setModalState(() {
-                                jobCategory = 'RUNNING';
-                                localError = null;
-                              });
-                            },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : (isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : borderColor),
-                              ),
-                              alignment: Alignment.center,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  if (!hasPo) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.lock_outline_rounded, size: 13, color: Colors.grey)),
-                                  Flexible(
-                                    child: Text(
-                                      hasPo ? "Running Order" : "Running (Needs PO)",
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(color: jobCategory == 'RUNNING' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 11.5),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-
-                    // JOB NUMBER & QUOTATION NUMBER ROW
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildModalField("Job Number *", "e.g. JOB-2026-101", jobNoCtrl, isDark),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildModalField("Quotation Reference *", "e.g. QT-2026-101", quoteNumberCtrl, isDark),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: hasPo ? const Color(0xFF10B981).withOpacity(0.12) : (isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: hasPo ? const Color(0xFF10B981) : borderColor),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Icon(Icons.verified_rounded, size: 16, color: hasPo ? const Color(0xFF10B981) : subTextColor),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text("Client Purchase Order (PO) Received?", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w700)),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Switch(
-                            value: hasPo,
-                            activeColor: const Color(0xFF10B981),
-                            onChanged: (val) {
-                              setModalState(() {
-                                hasPo = val;
-                                if (!hasPo) jobCategory = 'QUOTATION';
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    if (hasPo) ...[
-                      Row(
-                        children: [
-                          Expanded(flex: 3, child: _buildModalField("Client PO Number *", "e.g. PO/2026/894", poNumberCtrl, isDark)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 2,
-                            child: _buildDatePickerField(label: "PO Date", currentDate: poDateTime, isDark: isDark, onSelect: (dt) => setModalState(() => poDateTime = dt)),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-
-                    _buildModalField("Client / Company Name *", "e.g. Jindal Steel, Reliance", clientCtrl, isDark),
-                    const SizedBox(height: 8),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: _buildModalField(
-                            jobNature == 'PANEL' ? "Panel Specification *" : "Item Details *",
-                            jobNature == 'PANEL' ? "e.g. 50 HP VFD Control Panel" : "e.g. Mitsubishi FX5U PLC",
-                            itemOrPanelCtrl,
-                            isDark,
-                          ),
-                        ),
-                        if (jobNature == 'ITEM') ...[
-                          const SizedBox(width: 8),
-                          Expanded(flex: 1, child: _buildModalField("Qty", "1", qtyCtrl, isDark, keyboard: TextInputType.number)),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    _buildModalField("Scope of Work / Spares", "e.g. Wiring, Programming, Busbar sizing", specsCtrl, isDark),
-                    const SizedBox(height: 8),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildModalField("Quoted Price (₹) *", "e.g. 20000", quotePriceCtrl, isDark, keyboard: TextInputType.number),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildModalField(hasPo ? "PO Amount (₹) *" : "PO Amount (if any)", "e.g. 15000", poPriceCtrl, isDark, keyboard: TextInputType.number),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildDatePickerField(label: "Start Date", currentDate: startDateTime, isDark: isDark, onSelect: (dt) => setModalState(() => startDateTime = dt)),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: _buildDatePickerField(label: "Target Delivery", currentDate: targetDateTime, isDark: isDark, onSelect: (dt) => setModalState(() => targetDateTime = dt)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE88226)),
-                        onPressed: isSaving ? null : () async {
-                          if (jobNoCtrl.text.trim().isEmpty) {
-                            setModalState(() => localError = "Job Card Number is required!");
-                            return;
-                          }
-
-                          if (clientCtrl.text.trim().isEmpty || itemOrPanelCtrl.text.trim().isEmpty) {
-                            setModalState(() => localError = "Client Name and Item/Panel specification are required!");
-                            return;
-                          }
-
-                          if (jobCategory == 'RUNNING' && (!hasPo || poNumberCtrl.text.trim().isEmpty)) {
-                            setModalState(() => localError = "PO Number is mandatory to move the job to Running stage!");
-                            return;
-                          }
-
-                          setModalState(() {
-                            isSaving = true;
-                            localError = null;
-                          });
-
-                          final String typeTag = jobNature == 'ITEM' ? "[ITEM: ${qtyCtrl.text.trim()} Nos] " : "[PANEL] ";
-                          final String fullDesc = "$typeTag${itemOrPanelCtrl.text.trim()}";
-                          final finalJobNo = jobNoCtrl.text.trim();
-
-                          final quoteTag = quoteNumberCtrl.text.trim().isNotEmpty ? " [QUOTE: ${quoteNumberCtrl.text.trim()}]" : "";
-                          final poDetailsStr = hasPo ? " [PO: ${poNumberCtrl.text.trim()} | Date: ${_formatDate(poDateTime)}]" : "";
-                          final String finalSpecs = "${specsCtrl.text.trim()}$quoteTag$poDetailsStr".trim();
-
-                          final Map<String, dynamic> insertPayload = {
-                            'job_no': finalJobNo,
-                            'client': clientCtrl.text.trim(),
-                            'panel_type': fullDesc,
-                            'specs_detail': finalSpecs,
-                            'quotation_amount': quotePriceCtrl.text.trim(),
-                            'invoice_amount': poPriceCtrl.text.trim().isNotEmpty ? poPriceCtrl.text.trim() : null,
-                            'stage': jobCategory == 'QUOTATION'
-                                ? 'Quotation / Commercial Review'
-                                : (jobNature == 'ITEM' ? 'Testing & Servicing Stage' : 'Fabrication & Layout Stage'),
-                            'status': jobCategory,
-                            'progress': jobCategory == 'QUOTATION' ? 0.05 : 0.25,
-                            'start_date': _formatDate(startDateTime),
-                            'target_date': _formatDate(targetDateTime),
-                          };
-
-                          try {
-                            if (hasPo && poNumberCtrl.text.trim().isNotEmpty) {
-                              insertPayload['po_number'] = poNumberCtrl.text.trim();
-                            }
-                            await _supabase.from('job_cards').insert(insertPayload);
-                            await _fetchJobCards();
-                            Navigator.pop(ctx);
-                          } catch (e) {
-                            try {
-                              insertPayload.remove('po_number');
-                              await _supabase.from('job_cards').insert(insertPayload);
-                              await _fetchJobCards();
-                              Navigator.pop(ctx);
-                            } catch (e2) {
-                              setModalState(() {
-                                isSaving = false;
-                                localError = "Save Failed: $e2";
-                              });
-                            }
-                          }
-                        },
-                        child: isSaving
-                            ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2))
-                            : Text(
-                                jobCategory == 'QUOTATION' ? "Save Quotation" : "Start Production Order (With PO)",
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildDatePickerField({
-    required String label,
-    required DateTime currentDate,
-    required bool isDark,
-    required Function(DateTime) onSelect,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF334155), fontSize: 11, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 3),
-        GestureDetector(
-          onTap: () async {
-            FocusScope.of(context).unfocus();
-            final picked = await showDatePicker(
-              context: context,
-              initialDate: currentDate,
-              firstDate: DateTime(2023),
-              lastDate: DateTime(2035),
-            );
-            if (picked != null) {
-              onSelect(picked);
-            }
-          },
-          child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(_formatDate(currentDate), style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12, fontWeight: FontWeight.w600)),
-                const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFFE88226)),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- WORKFLOW ACTION MODAL ---
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
     final reasonCtrl = TextEditingController(text: job['pending_reason'] ?? '');
@@ -1075,7 +610,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     bool hvTestOk = true;
     bool plcLogicOk = true;
     bool dressingOk = true;
-    bool drawingOk = true; // NEW: ELECTRICAL DRAWING OK
+    bool drawingOk = true;
 
     showDialog(
       context: context,
@@ -1115,8 +650,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ),
                     ),
                     const SizedBox(height: 10),
-
-                    // 1. QUOTATION STAGE
                     if (status == 'QUOTATION') ...[
                       Text("Client PO Details:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
@@ -1166,7 +699,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               upFields['invoice_amount'] = poAmtCtrl.text.trim();
                             }
                             await _updateJobStatus(job['id'], upFields);
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
@@ -1186,13 +719,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'status': 'CANCELLED',
                               'stage': 'Quotation Rejected / Cancelled',
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
                     ],
-
-                    // 2. RUNNING STAGE
                     if (status == 'RUNNING') ...[
                       Text("Update Stage Progress:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
@@ -1219,7 +750,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'stage': 'HV & PLC Logic Testing',
                               'progress': 0.80,
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
@@ -1254,7 +785,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                     'stage': r.isNotEmpty ? 'On Hold: $r' : 'On Hold (Pending)',
                                     'pending_reason': r,
                                   });
-                                  Navigator.pop(ctx);
+                                  if (ctx.mounted) Navigator.pop(ctx);
                                 },
                               ),
                             ),
@@ -1274,7 +805,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                     'stage': r.isNotEmpty ? 'Cancelled: $r' : 'Order Cancelled',
                                     'pending_reason': r,
                                   });
-                                  Navigator.pop(ctx);
+                                  if (ctx.mounted) Navigator.pop(ctx);
                                 },
                               ),
                             ),
@@ -1282,8 +813,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ],
                       ),
                     ],
-
-                    // 3. PENDING STAGE
                     if (status == 'PENDING') ...[
                       Container(
                         padding: const EdgeInsets.all(8),
@@ -1323,7 +852,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'stage': 'Work Resumed (Active Production)',
                               'pending_reason': null,
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
@@ -1340,13 +869,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'status': 'CANCELLED',
                               'stage': 'Order Cancelled from Pending',
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
                     ],
-
-                    // 4. TESTING STAGE (QC CHECKLIST WITH ELECTRICAL DRAWING)
                     if (status == 'TESTING') ...[
                       const Text("Factory QC Checklist:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
                       CheckboxListTile(
@@ -1397,7 +924,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                     'stage': 'Drawing & QC Passed, Ready for Billing',
                                     'progress': 0.90,
                                   });
-                                  Navigator.pop(ctx);
+                                  if (ctx.mounted) Navigator.pop(ctx);
                                 }
                               : null,
                         ),
@@ -1415,13 +942,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'status': 'CANCELLED',
                               'stage': 'Cancelled during testing',
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
                     ],
-
-                    // 5. COMPLETED / BILLING STAGE
                     if (status == 'COMPLETED' || status == 'BILLING') ...[
                       TextField(
                         controller: invoiceNoCtrl,
@@ -1480,13 +1005,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'invoice_amount': invoiceAmtCtrl.text.trim(),
                               'dispatch_vehicle': vehicleCtrl.text.trim(),
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
                     ],
-
-                    // 6. CANCELLED STAGE
                     if (status == 'CANCELLED') ...[
                       const Text("Order Status: CANCELLED", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
@@ -1504,7 +1027,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'status': 'RUNNING',
                               'stage': 'Order Re-opened for production',
                             });
-                            Navigator.pop(ctx);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
                       ),
@@ -1532,7 +1055,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       side: BorderSide(color: isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1)),
       onPressed: () async {
         await _updateJobStatus(jobId, {'stage': stageName, 'progress': prog});
-        Navigator.pop(ctx);
+        if (ctx.mounted) Navigator.pop(ctx);
       },
     );
   }
@@ -1553,35 +1076,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         );
       }
     }
-  }
-
-  static Widget _buildModalField(String label, String hint, TextEditingController ctrl, bool isDark, {TextInputType keyboard = TextInputType.text}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF334155), fontSize: 11, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 3),
-        Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
-          ),
-          child: TextField(
-            controller: ctrl,
-            keyboardType: keyboard,
-            style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: TextStyle(color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8), fontSize: 11),
-              border: InputBorder.none,
-            ),
-          ),
-        ),
-      ],
-    );
   }
 
   @override
@@ -1621,13 +1115,15 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       final panelType = (j['panel_type'] ?? '').toString().toLowerCase();
       final poNoStr = (poNoVal ?? '').toString().toLowerCase();
       final quoteNoStr = _extractQuoteNo(specs).toLowerCase();
+      final authorStr = _extractCreatedBy(j).toLowerCase();
 
       final matchesSearch = _searchQuery.isEmpty ||
           client.contains(_searchQuery) ||
           jobNo.contains(_searchQuery) ||
           panelType.contains(_searchQuery) ||
           poNoStr.contains(_searchQuery) ||
-          quoteNoStr.contains(_searchQuery);
+          quoteNoStr.contains(_searchQuery) ||
+          authorStr.contains(_searchQuery);
 
       return matchesTab && matchesSearch;
     }).toList();
@@ -1727,7 +1223,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFFE88226)))
                 : Column(
                     children: [
-                      // TOP 9 TILES
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                         child: Column(
@@ -1760,8 +1255,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           ],
                         ),
                       ),
-
-                      // HORIZONTAL CHIPS
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
                         child: SingleChildScrollView(
@@ -1790,7 +1283,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           ),
                         ),
                       ),
-
                       Expanded(
                         child: filteredJobs.isEmpty
                             ? ListView(
@@ -1885,13 +1377,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- INDUSTRIAL CARD WITH JOB NO, QUOTE NO, PO NO, START & TARGET DATES ---
+  // --- INDUSTRIAL CARD WITH PROPER VISIBLE DATES & CLEAN BOTTOM FOOTER FOR AUTHOR ---
   Widget _buildCrispIndustrialCard(Map<String, dynamic> job, bool isDark) {
     final statusStr = (job['status'] ?? '').toString().toUpperCase();
     final String? poNumber = job['po_number'];
     final String specsStr = (job['specs_detail'] ?? '').toString();
     final String quoteNo = _extractQuoteNo(specsStr);
     final String jobNo = (job['job_no'] ?? '').toString().trim();
+    final String author = _extractCreatedBy(job);
 
     Color statusColor;
     switch (statusStr) {
@@ -1928,7 +1421,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final rawDesc = (job['panel_type'] ?? '').toString();
     final bool isItem = rawDesc.contains('[ITEM:');
 
-    // QUOTE VS PO VARIANCE
     final quoteStr = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
     final poStr = (job['invoice_amount'] ?? '').toString().replaceAll(',', '').trim();
     final double? quoteVal = double.tryParse(quoteStr);
@@ -1964,6 +1456,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 1. TOP HEADER: JOB NO, QT NO, PO STATUS
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1973,7 +1466,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     runSpacing: 4,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      // 1. DISTINCT JOB NUMBER BADGE
                       if (jobNo.isNotEmpty)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
@@ -1992,8 +1484,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             ),
                           ),
                         ),
-
-                      // 2. QUOTATION NUMBER BADGE (QT)
                       if (quoteNo.isNotEmpty)
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
@@ -2011,8 +1501,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             ),
                           ),
                         ),
-
-                      // 3. PO BADGE
                       if ((poNumber != null && poNumber.isNotEmpty) || specsStr.contains("PO:"))
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
@@ -2042,10 +1530,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
                   ),
                 ),
-
                 const SizedBox(width: 6),
-
-                // STATUS PILL
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
                   decoration: BoxDecoration(
@@ -2068,6 +1553,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 8),
 
+            // 2. CLIENT & PRICING
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -2080,6 +1566,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 3),
 
+            // 3. ITEM/PANEL DESCRIPTION
             Row(
               children: [
                 Container(
@@ -2141,6 +1628,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
             const SizedBox(height: 8),
 
+            // 4. PROGRESS BAR
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -2161,42 +1649,51 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
             const SizedBox(height: 8),
             Divider(color: borderC, height: 1),
-            const SizedBox(height: 6),
+            const SizedBox(height: 7),
 
-            // DATES ROW: START DATE & TARGET DELIVERY DATE
+            // 5. MAIN ACTION & DATES ROW (START & TARGET NEVER HIDDEN)
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                // START & TARGET DATES IN CLEAN COLUMN
                 Expanded(
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.play_arrow_rounded, size: 12, color: subC),
-                      const SizedBox(width: 2),
-                      Text("Start: $startDateStr", style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
-                      const SizedBox(width: 8),
-                      Icon(Icons.flag_rounded, size: 11, color: const Color(0xFFE88226)),
-                      const SizedBox(width: 2),
-                      Flexible(
-                        child: Text(
-                          "Target: $targetDateStr",
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Color(0xFFE88226), fontSize: 9.5, fontWeight: FontWeight.w800),
-                        ),
+                      Row(
+                        children: [
+                          Icon(Icons.play_arrow_rounded, size: 12, color: subC),
+                          const SizedBox(width: 3),
+                          Text("Start: $startDateStr", style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Icon(Icons.flag_rounded, size: 12, color: Color(0xFFE88226)),
+                          const SizedBox(width: 3),
+                          Text(
+                            "Target: $targetDateStr",
+                            style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.w800),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
+
+                // EDIT & DELETE BUTTONS
                 Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     InkWell(
                       onTap: () => _openEditJobModal(job, isDark),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                         decoration: BoxDecoration(color: const Color(0xFF0284C7).withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
                         child: const Row(
                           children: [
                             Icon(Icons.edit, size: 11, color: Color(0xFF0284C7)),
-                            SizedBox(width: 2),
+                            SizedBox(width: 3),
                             Text("Edit", style: TextStyle(color: Color(0xFF0284C7), fontSize: 9.5, fontWeight: FontWeight.bold)),
                           ],
                         ),
@@ -2206,12 +1703,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     InkWell(
                       onTap: () => _deleteJob(job['id'], null),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                         decoration: BoxDecoration(color: Colors.red.withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
                         child: const Row(
                           children: [
                             Icon(Icons.delete_outline, size: 11, color: Colors.red),
-                            SizedBox(width: 2),
+                            SizedBox(width: 3),
                             Text("Delete", style: TextStyle(color: Colors.red, fontSize: 9.5, fontWeight: FontWeight.bold)),
                           ],
                         ),
@@ -2221,9 +1718,726 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ),
               ],
             ),
+
+            // 6. BOTTOM-RIGHT SUBTLE "CREATED BY" FOOTER (JAISA STATEMENT / INVOICE MEIN HOTA HAI)
+            if (author.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.person_rounded,
+                      size: 10.5,
+                      color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      "Created by: $author",
+                      style: TextStyle(
+                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+// =========================================================================
+// STANDALONE NATIVE FORM SCREEN
+// =========================================================================
+class FastJobFormScreen extends StatefulWidget {
+  final bool isDark;
+  final bool isEditMode;
+  final Map<String, dynamic>? initialJob;
+  final String? defaultJobNo;
+  final String? defaultQuoteNo;
+  final String currentOperator;
+  final List<String> clientSuggestions;
+  final List<String> panelSuggestions;
+  final List<String> specsSuggestions;
+  final Future<void> Function(Map<String, dynamic>) onSaved;
+
+  const FastJobFormScreen({
+    super.key,
+    required this.isDark,
+    required this.isEditMode,
+    this.initialJob,
+    this.defaultJobNo,
+    this.defaultQuoteNo,
+    required this.currentOperator,
+    required this.clientSuggestions,
+    required this.panelSuggestions,
+    required this.specsSuggestions,
+    required this.onSaved,
+  });
+
+  @override
+  State<FastJobFormScreen> createState() => _FastJobFormScreenState();
+}
+
+class _FastJobFormScreenState extends State<FastJobFormScreen> {
+  late DateTime startDateTime;
+  late DateTime targetDateTime;
+  late DateTime poDateTime;
+
+  late final TextEditingController jobNoCtrl;
+  late final TextEditingController clientCtrl;
+  late final TextEditingController itemOrPanelCtrl;
+  late final TextEditingController qtyCtrl;
+  late final TextEditingController quoteNumberCtrl;
+  late final TextEditingController poNumberCtrl;
+  late final TextEditingController specsCtrl;
+  late final TextEditingController quotePriceCtrl;
+  late final TextEditingController poPriceCtrl;
+  late final TextEditingController targetDateCtrl;
+
+  String jobNature = 'PANEL';
+  String jobCategory = 'QUOTATION';
+  bool hasPo = false;
+  bool isSaving = false;
+  String? localError;
+  String existingAuthor = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    startDateTime = now;
+    targetDateTime = now.add(const Duration(days: 14));
+    poDateTime = now;
+
+    if (widget.isEditMode && widget.initialJob != null) {
+      final job = widget.initialJob!;
+      final rawSpecs = (job['specs_detail'] ?? '').toString();
+      final qReg = RegExp(r'\[QUOTE:\s*(.*?)\]');
+      final qMatch = qReg.firstMatch(rawSpecs);
+      final currentQuoteNo = (qMatch != null && qMatch.groupCount >= 1) ? (qMatch.group(1)?.trim() ?? '') : '';
+
+      final byReg = RegExp(r'\[BY:\s*(.*?)\]');
+      final byMatch = byReg.firstMatch(rawSpecs);
+      existingAuthor = (job['created_by'] ?? '').toString().trim();
+      if (existingAuthor.isEmpty && byMatch != null && byMatch.groupCount >= 1) {
+        existingAuthor = byMatch.group(1)?.trim().toUpperCase() ?? '';
+      }
+      if (existingAuthor.isEmpty) {
+        existingAuthor = widget.currentOperator;
+      }
+
+      final cleanSpecs = rawSpecs
+          .replaceAll(RegExp(r'\[QUOTE:.*?\]'), '')
+          .replaceAll(RegExp(r'\[PO:.*?\]'), '')
+          .replaceAll(RegExp(r'\[BY:.*?\]'), '')
+          .trim();
+
+      jobNoCtrl = TextEditingController(text: job['job_no'] ?? '');
+      clientCtrl = TextEditingController(text: job['client'] ?? '');
+      itemOrPanelCtrl = TextEditingController(text: job['panel_type'] ?? '');
+      qtyCtrl = TextEditingController(text: "1");
+      quoteNumberCtrl = TextEditingController(text: currentQuoteNo);
+      poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
+      specsCtrl = TextEditingController(text: cleanSpecs);
+      quotePriceCtrl = TextEditingController(text: (job['quotation_amount'] ?? '').toString());
+      poPriceCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
+      targetDateCtrl = TextEditingController(text: job['target_date'] ?? _formatDate(targetDateTime));
+    } else {
+      existingAuthor = widget.currentOperator;
+      jobNoCtrl = TextEditingController(text: widget.defaultJobNo ?? '');
+      clientCtrl = TextEditingController();
+      itemOrPanelCtrl = TextEditingController();
+      qtyCtrl = TextEditingController(text: "1");
+      quoteNumberCtrl = TextEditingController(text: widget.defaultQuoteNo ?? '');
+      poNumberCtrl = TextEditingController();
+      specsCtrl = TextEditingController();
+      quotePriceCtrl = TextEditingController();
+      poPriceCtrl = TextEditingController();
+      targetDateCtrl = TextEditingController(text: _formatDate(targetDateTime));
+    }
+  }
+
+  @override
+  void dispose() {
+    jobNoCtrl.dispose();
+    clientCtrl.dispose();
+    itemOrPanelCtrl.dispose();
+    qtyCtrl.dispose();
+    quoteNumberCtrl.dispose();
+    poNumberCtrl.dispose();
+    specsCtrl.dispose();
+    quotePriceCtrl.dispose();
+    poPriceCtrl.dispose();
+    targetDateCtrl.dispose();
+    super.dispose();
+  }
+
+  static String _monthName(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return (month >= 1 && month <= 12) ? months[month - 1] : 'Jan';
+  }
+
+  static String _formatDate(DateTime dt) {
+    return "${dt.day} ${_monthName(dt.month)} ${dt.year}";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color screenBg = widget.isDark ? const Color(0xFF07121A) : const Color(0xFFF1F5F9);
+    final Color cardBg = widget.isDark ? const Color(0xFF0C2232) : Colors.white;
+    final Color textColor = widget.isDark ? Colors.white : const Color(0xFF0F172A);
+    final Color subTextColor = widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final Color borderColor = widget.isDark ? const Color(0xFF1E3A52) : const Color(0xFFCBD5E1);
+
+    return Scaffold(
+      backgroundColor: screenBg,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: cardBg,
+        elevation: 0.5,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back_rounded, color: textColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.isEditMode ? "Edit Job Details" : (jobNature == 'PANEL' ? "New Control Panel Job" : "New Component / Spare Job"),
+              style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800),
+            ),
+            Row(
+              children: [
+                Text("Author: ", style: TextStyle(color: subTextColor, fontSize: 10)),
+                Text(existingAuthor, style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w900)),
+              ],
+            ),
+          ],
+        ),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (localError != null)
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.red.withOpacity(0.4)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red, size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(localError!, style: const TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold))),
+                    ],
+                  ),
+                ),
+              if (!widget.isEditMode) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => jobNature = 'PANEL'),
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: jobNature == 'PANEL' ? const Color(0xFFE88226) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: jobNature == 'PANEL' ? const Color(0xFFE88226) : borderColor),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text("Control Panel", style: TextStyle(color: jobNature == 'PANEL' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => jobNature = 'ITEM'),
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : borderColor),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text("Spare Item", style: TextStyle(color: jobNature == 'ITEM' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => jobCategory = 'QUOTATION'),
+                        child: Container(
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: jobCategory == 'QUOTATION' ? const Color(0xFF8B5CF6) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFF8B5CF6)),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text("Quotation Stage", style: TextStyle(color: jobCategory == 'QUOTATION' ? Colors.white : const Color(0xFF8B5CF6), fontWeight: FontWeight.bold, fontSize: 11.5)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          if (!hasPo) {
+                            setState(() => localError = "Enable PO and specify the PO Number and Value before proceeding to Running!");
+                            return;
+                          }
+                          setState(() {
+                            jobCategory = 'RUNNING';
+                            localError = null;
+                          });
+                        },
+                        child: Container(
+                          height: 38,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : borderColor),
+                          ),
+                          alignment: Alignment.center,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              if (!hasPo) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.lock_outline_rounded, size: 13, color: Colors.grey)),
+                              Flexible(
+                                child: Text(
+                                  hasPo ? "Running Order" : "Running (Needs PO)",
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: jobCategory == 'RUNNING' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 11.5),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildInput(label: "Job Number *", hint: "e.g. JOB-2026-101", ctrl: jobNoCtrl),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildInput(label: "Quotation Reference *", hint: "e.g. QT-2026-101", ctrl: quoteNumberCtrl),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (!widget.isEditMode) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: hasPo ? const Color(0xFF10B981).withOpacity(0.12) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: hasPo ? const Color(0xFF10B981) : borderColor),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Icon(Icons.verified_rounded, size: 16, color: hasPo ? const Color(0xFF10B981) : subTextColor),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text("Client Purchase Order (PO) Received?", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w700)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: hasPo,
+                        activeColor: const Color(0xFF10B981),
+                        onChanged: (val) {
+                          setState(() {
+                            hasPo = val;
+                            if (!hasPo) jobCategory = 'QUOTATION';
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                if (hasPo) ...[
+                  Row(
+                    children: [
+                      Expanded(flex: 3, child: _buildInput(label: "Client PO Number *", hint: "e.g. PO/2026/894", ctrl: poNumberCtrl)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: _buildDatePicker(label: "PO Date", currentDate: poDateTime, onSelect: (dt) => setState(() => poDateTime = dt)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ] else ...[
+                _buildInput(label: "PO Number", hint: "e.g. PO/2026/894", ctrl: poNumberCtrl),
+                const SizedBox(height: 10),
+              ],
+              _buildLiveSearchField(
+                label: "Client / Company Name *",
+                hint: "e.g. Jindal Steel, Reliance",
+                ctrl: clientCtrl,
+                suggestions: widget.clientSuggestions,
+              ),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: _buildLiveSearchField(
+                      label: widget.isEditMode ? "Item / Panel Specifications" : (jobNature == 'PANEL' ? "Panel Specification *" : "Item Details *"),
+                      hint: "e.g. 50 HP VFD Control Panel",
+                      ctrl: itemOrPanelCtrl,
+                      suggestions: widget.panelSuggestions,
+                    ),
+                  ),
+                  if (!widget.isEditMode && jobNature == 'ITEM') ...[
+                    const SizedBox(width: 8),
+                    Expanded(flex: 1, child: _buildInput(label: "Qty", hint: "1", ctrl: qtyCtrl, keyboard: TextInputType.number)),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              _buildLiveSearchField(
+                label: "Scope of Work / Spares",
+                hint: "e.g. Wiring, Programming, Busbar sizing",
+                ctrl: specsCtrl,
+                suggestions: widget.specsSuggestions,
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildInput(label: "Quoted Price (₹) *", hint: "e.g. 20000", ctrl: quotePriceCtrl, keyboard: TextInputType.number),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildInput(label: hasPo ? "PO Amount (₹) *" : "Final / PO Price (₹)", hint: "e.g. 15000", ctrl: poPriceCtrl, keyboard: TextInputType.number),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // DEDICATED FULL WIDTH TARGET DELIVERY DATE FIELD
+              Row(
+                children: [
+                  if (!widget.isEditMode) ...[
+                    Expanded(
+                      child: _buildDatePicker(label: "Start Date", currentDate: startDateTime, onSelect: (dt) => setState(() => startDateTime = dt)),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    child: _buildDatePicker(
+                      label: "Target Delivery Date *",
+                      currentDate: targetDateTime,
+                      onSelect: (dt) {
+                        setState(() {
+                          targetDateTime = dt;
+                          targetDateCtrl.text = _formatDate(dt);
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: widget.isEditMode ? const Color(0xFF0284C7) : const Color(0xFFE88226),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: isSaving ? null : () async {
+                    if (jobNoCtrl.text.trim().isEmpty) {
+                      setState(() => localError = "Job Card Number is required!");
+                      return;
+                    }
+
+                    if (clientCtrl.text.trim().isEmpty || itemOrPanelCtrl.text.trim().isEmpty) {
+                      setState(() => localError = "Client Name and Item/Panel specification are required!");
+                      return;
+                    }
+
+                    if (!widget.isEditMode && jobCategory == 'RUNNING' && (!hasPo || poNumberCtrl.text.trim().isEmpty)) {
+                      setState(() => localError = "PO Number is mandatory to move the job to Running stage!");
+                      return;
+                    }
+
+                    setState(() {
+                      isSaving = true;
+                      localError = null;
+                    });
+
+                    final finalJobNo = jobNoCtrl.text.trim();
+                    final quoteTag = quoteNumberCtrl.text.trim().isNotEmpty ? " [QUOTE: ${quoteNumberCtrl.text.trim()}]" : "";
+                    final poDetailsStr = (hasPo || poNumberCtrl.text.trim().isNotEmpty) ? " [PO: ${poNumberCtrl.text.trim()} | Date: ${_formatDate(poDateTime)}]" : "";
+                    final authorTag = " [BY: $existingAuthor]";
+                    final String finalSpecs = "${specsCtrl.text.trim()}$quoteTag$poDetailsStr$authorTag".trim();
+
+                    if (widget.isEditMode) {
+                      final Map<String, dynamic> updateData = {
+                        'job_no': finalJobNo,
+                        'client': clientCtrl.text.trim(),
+                        'panel_type': itemOrPanelCtrl.text.trim(),
+                        'quotation_amount': quotePriceCtrl.text.trim(),
+                        'specs_detail': finalSpecs,
+                        'created_by': existingAuthor,
+                        'target_date': targetDateCtrl.text.trim().isNotEmpty ? targetDateCtrl.text.trim() : _formatDate(targetDateTime),
+                      };
+                      if (poPriceCtrl.text.trim().isNotEmpty) {
+                        updateData['invoice_amount'] = poPriceCtrl.text.trim();
+                      }
+                      if (poNumberCtrl.text.trim().isNotEmpty) {
+                        updateData['po_number'] = poNumberCtrl.text.trim();
+                      }
+                      try {
+                        await widget.onSaved(updateData);
+                      } catch (e) {
+                        setState(() {
+                          isSaving = false;
+                          localError = "Failed to update: $e";
+                        });
+                      }
+                    } else {
+                      final String typeTag = jobNature == 'ITEM' ? "[ITEM: ${qtyCtrl.text.trim()} Nos] " : "[PANEL] ";
+                      final String fullDesc = "$typeTag${itemOrPanelCtrl.text.trim()}";
+
+                      final Map<String, dynamic> insertPayload = {
+                        'job_no': finalJobNo,
+                        'client': clientCtrl.text.trim(),
+                        'panel_type': fullDesc,
+                        'specs_detail': finalSpecs,
+                        'quotation_amount': quotePriceCtrl.text.trim(),
+                        'invoice_amount': poPriceCtrl.text.trim().isNotEmpty ? poPriceCtrl.text.trim() : null,
+                        'stage': jobCategory == 'QUOTATION'
+                            ? 'Quotation / Commercial Review'
+                            : (jobNature == 'ITEM' ? 'Testing & Servicing Stage' : 'Fabrication & Layout Stage'),
+                        'status': jobCategory,
+                        'progress': jobCategory == 'QUOTATION' ? 0.05 : 0.25,
+                        'start_date': _formatDate(startDateTime),
+                        'target_date': targetDateCtrl.text.trim().isNotEmpty ? targetDateCtrl.text.trim() : _formatDate(targetDateTime),
+                        'created_by': existingAuthor,
+                      };
+
+                      if (hasPo && poNumberCtrl.text.trim().isNotEmpty) {
+                        insertPayload['po_number'] = poNumberCtrl.text.trim();
+                      }
+
+                      try {
+                        await widget.onSaved(insertPayload);
+                      } catch (err) {
+                        setState(() {
+                          isSaving = false;
+                          localError = "Save Failed: $err";
+                        });
+                      }
+                    }
+                  },
+                  child: isSaving
+                      ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2))
+                      : Text(
+                          widget.isEditMode
+                              ? "Save Changes"
+                              : (jobCategory == 'QUOTATION' ? "Save Quotation" : "Start Production Order (With PO)"),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInput({required String label, required String hint, required TextEditingController ctrl, TextInputType keyboard = TextInputType.text}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF334155), fontSize: 11, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3),
+        Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: widget.isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
+          ),
+          child: TextField(
+            controller: ctrl,
+            keyboardType: keyboard,
+            style: TextStyle(color: widget.isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: TextStyle(color: widget.isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8), fontSize: 11),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLiveSearchField({
+    required String label,
+    required String hint,
+    required TextEditingController ctrl,
+    required List<String> suggestions,
+  }) {
+    final query = ctrl.text.trim().toLowerCase();
+    final matchedList = query.isEmpty
+        ? <String>[]
+        : suggestions.where((s) => s.toLowerCase().contains(query)).take(4).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF334155), fontSize: 11, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3),
+        Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: widget.isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
+          ),
+          child: TextField(
+            controller: ctrl,
+            onChanged: (v) => setState(() {}),
+            style: TextStyle(color: widget.isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12),
+            decoration: InputDecoration(
+              hintText: hint,
+              hintStyle: TextStyle(color: widget.isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8), fontSize: 11),
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 11),
+            ),
+          ),
+        ),
+        if (matchedList.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.only(top: 2),
+            decoration: BoxDecoration(
+              color: widget.isDark ? const Color(0xFF071824) : Colors.white,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+            ),
+            child: Column(
+              children: matchedList.map((match) {
+                return InkWell(
+                  onTap: () {
+                    setState(() {
+                      ctrl.text = match;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    width: double.infinity,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.history_rounded, size: 13, color: Color(0xFF0284C7)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            match,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: widget.isDark ? Colors.white : const Color(0xFF0F172A),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDatePicker({required String label, required DateTime currentDate, required Function(DateTime) onSelect}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(color: widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF334155), fontSize: 11, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 3),
+        GestureDetector(
+          onTap: () async {
+            FocusScope.of(context).unfocus();
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: currentDate,
+              firstDate: DateTime(2023),
+              lastDate: DateTime(2035),
+            );
+            if (picked != null) onSelect(picked);
+          },
+          child: Container(
+            height: 42,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: widget.isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_formatDate(currentDate), style: TextStyle(color: widget.isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 12, fontWeight: FontWeight.w600)),
+                const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFFE88226)),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
