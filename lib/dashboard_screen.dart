@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'custom_drawer.dart';
 
+final ValueNotifier<bool> isDarkModeNotifier = ValueNotifier<bool>(true);
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -18,6 +20,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   final SupabaseClient _supabase = Supabase.instance.client;
 
   List<Map<String, dynamic>> _jobCards = [];
+  List<String> _availableWorkers = ['MALIK10'];
   bool _isLoading = true;
   String _currentOperator = 'JUNAID';
 
@@ -25,6 +28,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   void initState() {
     super.initState();
     _loadCurrentOperator();
+    _fetchWorkers();
     _fetchJobCards();
   }
 
@@ -42,6 +46,22 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         setState(() {
           _currentOperator = savedUser.trim().toUpperCase();
         });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchWorkers() async {
+    try {
+      final res = await _supabase.from('workers').select('username');
+      if (res.isNotEmpty && mounted) {
+        final list = List<Map<String, dynamic>>.from(res)
+            .map((w) => (w['username'] ?? '').toString().trim().toUpperCase())
+            .where((w) => w.isNotEmpty)
+            .toSet()
+            .toList();
+        if (list.isNotEmpty) {
+          setState(() => _availableWorkers = list);
+        }
       }
     } catch (_) {}
   }
@@ -87,17 +107,13 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     return '';
   }
 
-  static String _extractCreatedBy(dynamic job) {
-    final dbUser = (job['created_by'] ?? '').toString().trim();
-    if (dbUser.isNotEmpty) return dbUser.toUpperCase();
-
-    final specs = (job['specs_detail'] ?? '').toString();
-    final reg = RegExp(r'\[BY:\s*(.*?)\]');
-    final match = reg.firstMatch(specs);
-    if (match != null && match.groupCount >= 1) {
-      return match.group(1)?.trim().toUpperCase() ?? '';
-    }
-    return '';
+  static String _extractCleanScope(String specs) {
+    return specs
+        .replaceAll(RegExp(r'\[QUOTE:.*?\]'), '')
+        .replaceAll(RegExp(r'\[PO:.*?\]'), '')
+        .replaceAll(RegExp(r'\[BY:.*?\]'), '')
+        .replaceAll(RegExp(r'\[WORKER:.*?\]'), '')
+        .trim();
   }
 
   List<String> _getUniqueSuggestions(String fieldKey, {bool isSpec = false}) {
@@ -105,11 +121,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     for (var job in _jobCards) {
       if (isSpec) {
         String raw = (job[fieldKey] ?? '').toString();
-        raw = raw
-            .replaceAll(RegExp(r'\[QUOTE:.*?\]'), '')
-            .replaceAll(RegExp(r'\[PO:.*?\]'), '')
-            .replaceAll(RegExp(r'\[BY:.*?\]'), '')
-            .trim();
+        raw = _extractCleanScope(raw);
         if (raw.isNotEmpty) results.add(raw);
       } else {
         String val = (job[fieldKey] ?? '').toString();
@@ -198,13 +210,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     }
   }
 
-  void _openEditJobModal(Map<String, dynamic> job, bool isDark, [BuildContext? sheetCtx]) {
+  void _openEditQuoteModal(Map<String, dynamic> job, bool isDark, [BuildContext? sheetCtx]) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (ctx) => FastJobFormScreen(
+        builder: (ctx) => NewQuoteFormScreen(
           isDark: isDark,
           isEditMode: true,
           initialJob: job,
+          availableWorkers: _availableWorkers,
           currentOperator: _currentOperator,
           clientSuggestions: _getUniqueSuggestions('client'),
           panelSuggestions: _getUniqueSuggestions('panel_type'),
@@ -225,18 +238,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  void _openNewJobModal(bool isDark) {
+  void _openNewQuoteModal(bool isDark) {
     final now = DateTime.now();
     final defaultJobNo = "JOB-${now.year}-${100 + _jobCards.length + 1}";
     final defaultQuoteNo = "QT-${now.year}-${100 + _jobCards.length + 1}";
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (ctx) => FastJobFormScreen(
+        builder: (ctx) => NewQuoteFormScreen(
           isDark: isDark,
           isEditMode: false,
           defaultJobNo: defaultJobNo,
           defaultQuoteNo: defaultQuoteNo,
+          availableWorkers: _availableWorkers,
           currentOperator: _currentOperator,
           clientSuggestions: _getUniqueSuggestions('client'),
           panelSuggestions: _getUniqueSuggestions('panel_type'),
@@ -246,12 +260,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               await _supabase.from('job_cards').insert(payload);
             } catch (e) {
               payload.remove('created_by');
-              try {
-                await _supabase.from('job_cards').insert(payload);
-              } catch (e2) {
-                payload.remove('po_number');
-                await _supabase.from('job_cards').insert(payload);
-              }
+              await _supabase.from('job_cards').insert(payload);
             }
             await _fetchJobCards();
             if (ctx.mounted) Navigator.pop(ctx);
@@ -423,7 +432,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 width: 17,
                                 height: 95 * barHeightRatio,
                                 decoration: BoxDecoration(
-                                  color: isSelected ? (isDark ? Colors.white : themeColor) : themeColor.withOpacity(0.85),
+                                  color: isSelected ? Colors.white : themeColor.withOpacity(0.85),
                                   borderRadius: BorderRadius.circular(5),
                                   border: isSelected
                                       ? Border.all(color: isDark ? Colors.white : const Color(0xFF0F172A), width: 1.5)
@@ -542,7 +551,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                               Row(
                                                 children: [
                                                   InkWell(
-                                                    onTap: () => _openEditJobModal(item, isDark, ctx),
+                                                    onTap: () => _openEditQuoteModal(item, isDark, ctx),
                                                     child: Container(
                                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                       decoration: BoxDecoration(color: const Color(0xFF0284C7).withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
@@ -595,11 +604,26 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
     final reasonCtrl = TextEditingController(text: job['pending_reason'] ?? '');
-    final poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
-    final poAmtCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
+
+    final poNumberCtrl = TextEditingController();
+
+    final rawQuotationPrice = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
+    final rawInvoicePrice = (job['invoice_amount'] ?? '').toString().replaceAll(',', '').trim();
+    final poAmtCtrl = TextEditingController(
+      text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice,
+    );
+
     final invoiceNoCtrl = TextEditingController(text: job['invoice_no'] ?? 'INV-');
-    final invoiceAmtCtrl = TextEditingController(text: (job['invoice_amount'] ?? job['quotation_amount'] ?? '').toString());
+    final invoiceAmtCtrl = TextEditingController(
+      text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice,
+    );
     final vehicleCtrl = TextEditingController(text: job['dispatch_vehicle'] ?? '');
+
+    String currentAssigned = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
+    if (currentAssigned.isEmpty && _availableWorkers.isNotEmpty) {
+      currentAssigned = _availableWorkers.first;
+    }
+    String selectedWorker = currentAssigned.isNotEmpty ? currentAssigned : 'MALIK10';
 
     final Color dialogBg = isDark ? const Color(0xFF0C2232) : Colors.white;
     final Color textColor = isDark ? Colors.white : const Color(0xFF0F172A);
@@ -650,8 +674,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ),
                     ),
                     const SizedBox(height: 10),
+
                     if (status == 'QUOTATION') ...[
-                      Text("Client PO Details:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                      Text("Client Purchase Order (PO):", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
                       TextField(
                         controller: poNumberCtrl,
@@ -671,33 +696,80 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         keyboardType: TextInputType.number,
                         style: TextStyle(color: textColor, fontSize: 12),
                         decoration: InputDecoration(
-                          hintText: "Final PO Amount (₹) (e.g. 15000)",
-                          hintStyle: TextStyle(color: subTextColor, fontSize: 11),
+                          labelText: "Final PO Amount (₹) (Auto-filled)",
+                          labelStyle: const TextStyle(color: Color(0xFF10B981), fontSize: 11, fontWeight: FontWeight.bold),
                           filled: true,
                           fillColor: fieldBg,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
+
+                      const Text("Assign Builder (Kisko Dena Hai): *", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 5),
+                      Container(
+                        height: 42,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: fieldBg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
+                            hint: Text("Select Worker", style: TextStyle(color: subTextColor, fontSize: 11)),
+                            dropdownColor: dialogBg,
+                            isExpanded: true,
+                            icon: const Icon(Icons.engineering_rounded, color: Color(0xFF38BDF8), size: 18),
+                            items: _availableWorkers.map((w) {
+                              return DropdownMenuItem<String>(
+                                value: w,
+                                child: Text("Panel Builder: $w", style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                              );
+                            }).toList(),
+                            onChanged: (val) {
+                              if (val != null) {
+                                setDialogState(() => selectedWorker = val);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
                       SizedBox(
                         width: double.infinity,
-                        height: 38,
+                        height: 40,
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
                           icon: const Icon(Icons.verified_rounded, color: Colors.white, size: 16),
                           label: const Text("Verify PO & Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
-                            if (poNumberCtrl.text.trim().isEmpty) return;
+                            if (poNumberCtrl.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text("PO Number daalna zaroori hai!"), backgroundColor: Colors.red),
+                              );
+                              return;
+                            }
+
                             final Map<String, dynamic> upFields = {
                               'status': 'RUNNING',
                               'stage': 'Fabrication & Layout Stage',
                               'po_number': poNumberCtrl.text.trim(),
+                              'assigned_to': selectedWorker,
                               'progress': 0.25,
                             };
                             if (poAmtCtrl.text.trim().isNotEmpty) {
                               upFields['invoice_amount'] = poAmtCtrl.text.trim();
                             }
+
+                            String curSpecs = (job['specs_detail'] ?? '').toString();
+                            curSpecs = curSpecs.replaceAll(RegExp(r'\[WORKER:.*?\]'), '').trim();
+                            curSpecs = "$curSpecs [WORKER: $selectedWorker]";
+                            upFields['specs_detail'] = curSpecs;
+
                             await _updateJobStatus(job['id'], upFields);
                             if (ctx.mounted) Navigator.pop(ctx);
                           },
@@ -724,7 +796,52 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                     ],
+
                     if (status == 'RUNNING') ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text("Builder Assigned:", style: TextStyle(color: subTextColor, fontSize: 11)),
+                          Text(selectedWorker, style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.w900)),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        height: 38,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: fieldBg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1)),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
+                            hint: Text("Re-assign Builder", style: TextStyle(color: subTextColor, fontSize: 11)),
+                            dropdownColor: dialogBg,
+                            isExpanded: true,
+                            items: _availableWorkers.map((w) {
+                              return DropdownMenuItem<String>(
+                                value: w,
+                                child: Text("Change Builder: $w", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                              );
+                            }).toList(),
+                            onChanged: (val) async {
+                              if (val != null) {
+                                setDialogState(() => selectedWorker = val);
+                                String curSpecs = (job['specs_detail'] ?? '').toString();
+                                curSpecs = curSpecs.replaceAll(RegExp(r'\[WORKER:.*?\]'), '').trim();
+                                curSpecs = "$curSpecs [WORKER: $val]";
+                                await _updateJobStatus(job['id'], {
+                                  'assigned_to': val,
+                                  'specs_detail': curSpecs,
+                                });
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
                       Text("Update Stage Progress:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
                       Wrap(
@@ -813,6 +930,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ],
                       ),
                     ],
+
                     if (status == 'PENDING') ...[
                       Container(
                         padding: const EdgeInsets.all(8),
@@ -874,6 +992,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                     ],
+
                     if (status == 'TESTING') ...[
                       const Text("Factory QC Checklist:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
                       CheckboxListTile(
@@ -947,6 +1066,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                     ],
+
                     if (status == 'COMPLETED' || status == 'BILLING') ...[
                       TextField(
                         controller: invoiceNoCtrl,
@@ -1010,6 +1130,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                     ],
+
                     if (status == 'CANCELLED') ...[
                       const Text("Order Status: CANCELLED", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
@@ -1115,7 +1236,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       final panelType = (j['panel_type'] ?? '').toString().toLowerCase();
       final poNoStr = (poNoVal ?? '').toString().toLowerCase();
       final quoteNoStr = _extractQuoteNo(specs).toLowerCase();
-      final authorStr = _extractCreatedBy(j).toLowerCase();
+      final scopeStr = _extractCleanScope(specs).toLowerCase();
 
       final matchesSearch = _searchQuery.isEmpty ||
           client.contains(_searchQuery) ||
@@ -1123,7 +1244,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           panelType.contains(_searchQuery) ||
           poNoStr.contains(_searchQuery) ||
           quoteNoStr.contains(_searchQuery) ||
-          authorStr.contains(_searchQuery);
+          scopeStr.contains(_searchQuery);
 
       return matchesTab && matchesSearch;
     }).toList();
@@ -1169,7 +1290,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             });
                           },
                         ),
-                        hintText: "Search Job #, PO #, Quote #...",
+                        hintText: "Search Job #, PO #, Scope of Work...",
                         hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(vertical: 9),
@@ -1184,19 +1305,26 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: Image.asset('assets/images/nextgen_logo_1.jpg', width: 34, height: 34, fit: BoxFit.contain),
                       ),
                       const SizedBox(width: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              Text("NEXTGEN", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF1E3A5F), fontSize: 14.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-                              const SizedBox(width: 4),
-                              const Text("CONTROLS", style: TextStyle(color: Color(0xFFE88226), fontSize: 12.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-                            ],
-                          ),
-                          Text("PRIVATE LIMITED • Simplify Your Industry", style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 7.5, fontWeight: FontWeight.w600)),
-                        ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              children: [
+                                Text("NEXTGEN", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF1E3A5F), fontSize: 14.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+                                const SizedBox(width: 4),
+                                const Text("CONTROLS", style: TextStyle(color: Color(0xFFE88226), fontSize: 12.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+                              ],
+                            ),
+                            Text(
+                              "PRIVATE LIMITED • Simplify Your Industry",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 7.5, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -1216,11 +1344,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   ],
           ),
           body: RefreshIndicator(
-            color: const Color(0xFFE88226),
+            color: const Color(0xFF8B5CF6),
             backgroundColor: isDark ? const Color(0xFF0C2232) : Colors.white,
             onRefresh: _fetchJobCards,
             child: _isLoading
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFFE88226)))
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF8B5CF6)))
                 : Column(
                     children: [
                       Padding(
@@ -1287,6 +1415,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: filteredJobs.isEmpty
                             ? ListView(
                                 physics: const AlwaysScrollableScrollPhysics(),
+                                padding: const EdgeInsets.only(bottom: 90),
                                 children: [
                                   SizedBox(
                                     height: MediaQuery.of(context).size.height * 0.35,
@@ -1301,7 +1430,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               )
                             : ListView.builder(
                                 physics: const AlwaysScrollableScrollPhysics(),
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                // 90px BOTTOM PADDING TAANI FAB KE PEECHE KUCH BHI NA CHUPE!
+                                padding: const EdgeInsets.fromLTRB(12, 4, 12, 90),
                                 itemCount: filteredJobs.length,
                                 itemBuilder: (context, index) {
                                   final job = filteredJobs[index];
@@ -1312,11 +1442,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
                   ),
           ),
+
+          // PURPLE COLOR FLOATING BUTTON: "+ New Quote"
           floatingActionButton: FloatingActionButton.extended(
-            backgroundColor: const Color(0xFFE88226),
-            onPressed: () => _openNewJobModal(isDark),
+            backgroundColor: const Color(0xFF8B5CF6),
+            onPressed: () => _openNewQuoteModal(isDark),
             icon: const Icon(Icons.add_rounded, color: Colors.white),
-            label: const Text("New Job / Item", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            label: const Text(
+              "New Quote",
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.5),
+            ),
           ),
         );
       },
@@ -1363,7 +1498,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFFE88226) : (isDark ? const Color(0xFF0F2638) : Colors.white),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isSelected ? const Color(0xFFE88226) : (isDark ? const Color(0xFF1E4362) : const Color(0xFFCBD5E1))),
+          border: Border.all(color: isSelected ? const Color(0xFFE88226) : (isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1))),
         ),
         child: Text(
           label,
@@ -1377,14 +1512,35 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- INDUSTRIAL CARD WITH PROPER VISIBLE DATES & CLEAN BOTTOM FOOTER FOR AUTHOR ---
+  // --- CRISP INDUSTRIAL CARD: SHOWS BOTH "CREATED BY" & "BUILT BY" ---
   Widget _buildCrispIndustrialCard(Map<String, dynamic> job, bool isDark) {
     final statusStr = (job['status'] ?? '').toString().toUpperCase();
     final String? poNumber = job['po_number'];
     final String specsStr = (job['specs_detail'] ?? '').toString();
     final String quoteNo = _extractQuoteNo(specsStr);
     final String jobNo = (job['job_no'] ?? '').toString().trim();
-    final String author = _extractCreatedBy(job);
+    final String scopeOfWork = _extractCleanScope(specsStr);
+
+    // 1. Extract Created By
+    final byReg = RegExp(r'\[BY:\s*(.*?)\]');
+    final byMatch = byReg.firstMatch(specsStr);
+    String createdBy = (job['created_by'] ?? '').toString().trim();
+    if (createdBy.isEmpty && byMatch != null && byMatch.groupCount >= 1) {
+      createdBy = byMatch.group(1)?.trim().toUpperCase() ?? '';
+    }
+    if (createdBy.isEmpty) {
+      createdBy = 'JUNAID';
+    }
+
+    // 2. Extract Built By (Kiska Naam Par Ban Raha Hai)
+    String assignedBuilder = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
+    if (assignedBuilder.isEmpty) {
+      final wReg = RegExp(r'\[WORKER:\s*(.*?)\]');
+      final wMatch = wReg.firstMatch(specsStr);
+      if (wMatch != null && wMatch.groupCount >= 1) {
+        assignedBuilder = wMatch.group(1)?.trim().toUpperCase() ?? '';
+      }
+    }
 
     Color statusColor;
     switch (statusStr) {
@@ -1410,7 +1566,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         statusColor = const Color(0xFF10B981);
     }
 
-    final double progress = (job['progress'] as num?)?.toDouble() ?? 0.25;
+    final double progress = (job['progress'] as num?)?.toDouble() ?? 0.05;
     final int progressPercent = (progress * 100).toInt();
 
     final Color cardBg = isDark ? const Color(0xFF0B1F2F) : Colors.white;
@@ -1418,20 +1574,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final Color titleC = isDark ? Colors.white : const Color(0xFF0F172A);
     final Color subC = isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
 
-    final rawDesc = (job['panel_type'] ?? '').toString();
-    final bool isItem = rawDesc.contains('[ITEM:');
+    final rawDesc = (job['panel_type'] ?? '').toString().replaceAll('[PANEL]', '').replaceAll(RegExp(r'\[ITEM:.*?\]'), '').trim();
 
     final quoteStr = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
     final poStr = (job['invoice_amount'] ?? '').toString().replaceAll(',', '').trim();
     final double? quoteVal = double.tryParse(quoteStr);
     final double? poVal = double.tryParse(poStr);
-
-    double? diffVal;
-    double? diffPercent;
-    if (quoteVal != null && quoteVal > 0 && poVal != null && poVal > 0) {
-      diffVal = poVal - quoteVal;
-      diffPercent = ((poVal - quoteVal) / quoteVal) * 100;
-    }
 
     final String startDateStr = (job['start_date'] ?? '-').toString().trim();
     final String targetDateStr = (job['target_date'] ?? '-').toString().trim();
@@ -1456,7 +1604,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. TOP HEADER: JOB NO, QT NO, PO STATUS
+            // 1. TOP HEADER: JOB NO, QT NO, PO / STATUS
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1517,15 +1665,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               fontWeight: FontWeight.w900,
                             ),
                           ),
-                        )
-                      else if (quoteNo.isEmpty)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF8B5CF6).withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text("NO PO / QUOTE", style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 8.5, fontWeight: FontWeight.bold)),
                         ),
                     ],
                   ),
@@ -1553,87 +1692,56 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 8),
 
-            // 2. CLIENT & PRICING
+            // 2. CLIENT & QUOTED PRICE
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: Text(job['client'] ?? '', style: TextStyle(color: titleC, fontSize: 13.5, fontWeight: FontWeight.w800))),
+                Expanded(
+                  child: Text(
+                    job['client'] ?? '',
+                    style: TextStyle(color: titleC, fontSize: 13.5, fontWeight: FontWeight.w800),
+                  ),
+                ),
                 if (poVal != null && poVal > 0)
                   Text("PO: ₹${poVal.toStringAsFixed(0)}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 13, fontWeight: FontWeight.w900))
                 else if (quoteVal != null && quoteVal > 0)
-                  Text("Quoted: ₹${quoteVal.toStringAsFixed(0)}", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7), fontSize: 12.5, fontWeight: FontWeight.w800)),
+                  Text("Quoted: ₹${quoteVal.toStringAsFixed(0)}", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.w900)),
               ],
             ),
             const SizedBox(height: 3),
 
             // 3. ITEM/PANEL DESCRIPTION
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                  decoration: BoxDecoration(
-                    color: isItem ? const Color(0xFF0284C7).withOpacity(0.15) : const Color(0xFFE88226).withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: Text(isItem ? "ITEM" : "PANEL", style: TextStyle(color: isItem ? const Color(0xFF0284C7) : const Color(0xFFE88226), fontSize: 8.5, fontWeight: FontWeight.w900)),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    rawDesc.replaceAll('[PANEL]', '').replaceAll(RegExp(r'\[ITEM:.*?\]'), '').trim(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: subC, fontSize: 11, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
+            if (rawDesc.isNotEmpty)
+              Text(
+                rawDesc,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: isDark ? Colors.white70 : const Color(0xFF334155), fontSize: 11.5, fontWeight: FontWeight.w600),
+              ),
 
-            if (diffVal != null) ...[
-              const SizedBox(height: 7),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: diffVal < 0
-                      ? const Color(0xFFEF4444).withOpacity(0.12)
-                      : (diffVal > 0 ? const Color(0xFF10B981).withOpacity(0.12) : const Color(0xFF0284C7).withOpacity(0.12)),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: diffVal < 0
-                        ? const Color(0xFFEF4444).withOpacity(0.4)
-                        : (diffVal > 0 ? const Color(0xFF10B981).withOpacity(0.4) : const Color(0xFF0284C7).withOpacity(0.4)),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "Quoted: ₹${quoteVal!.toStringAsFixed(0)} ➔ PO: ₹${poVal!.toStringAsFixed(0)}",
-                      style: TextStyle(color: titleC, fontSize: 10, fontWeight: FontWeight.w700),
-                    ),
-                    Text(
-                      diffVal < 0
-                          ? "-₹${(-diffVal).toStringAsFixed(0)} (${diffPercent!.abs().toStringAsFixed(1)}% Cut)"
-                          : (diffVal > 0 ? "+₹${diffVal.toStringAsFixed(0)} (+${diffPercent!.toStringAsFixed(1)}%)" : "0 Diff (Exact Match)"),
-                      style: TextStyle(
-                        color: diffVal < 0 ? const Color(0xFFEF4444) : (diffVal > 0 ? const Color(0xFF10B981) : const Color(0xFF0284C7)),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
+            // 4. SCOPE OF WORK
+            if (scopeOfWork.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                scopeOfWork,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
 
-            // 4. PROGRESS BAR
+            // 5. STAGE NAME & PERCENTAGE (5%)
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(job['stage'] ?? statusStr, style: TextStyle(color: isDark ? Colors.white70 : const Color(0xFF1E293B), fontSize: 10.5, fontWeight: FontWeight.w700)),
-                Text("$progressPercent%", style: TextStyle(color: statusColor, fontSize: 10.5, fontWeight: FontWeight.w900)),
+                Text(job['stage'] ?? statusStr, style: TextStyle(color: isDark ? Colors.white60 : const Color(0xFF475569), fontSize: 10, fontWeight: FontWeight.w600)),
+                Text("$progressPercent%", style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w900)),
               ],
             ),
             const SizedBox(height: 4),
@@ -1641,7 +1749,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
                 value: progress.clamp(0.0, 1.0),
-                minHeight: 4,
+                minHeight: 3.5,
                 backgroundColor: isDark ? const Color(0xFF132A3E) : const Color(0xFFE2E8F0),
                 valueColor: AlwaysStoppedAnimation<Color>(statusColor),
               ),
@@ -1649,103 +1757,107 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
             const SizedBox(height: 8),
             Divider(color: borderC, height: 1),
-            const SizedBox(height: 7),
+            const SizedBox(height: 6),
 
-            // 5. MAIN ACTION & DATES ROW (START & TARGET NEVER HIDDEN)
+            // 6. DATES (LEFT) & ACTIONS + "CREATED BY" & "BUILT BY" (RIGHT)
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // START & TARGET DATES IN CLEAN COLUMN
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(Icons.play_arrow_rounded, size: 12, color: subC),
-                          const SizedBox(width: 3),
-                          Text("Start: $startDateStr", style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
+                      Text(startDateStr, style: TextStyle(color: subC, fontSize: 9.5, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          const Icon(Icons.flag_rounded, size: 12, color: Color(0xFFE88226)),
-                          const SizedBox(width: 3),
-                          Text(
-                            "Target: $targetDateStr",
-                            style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.w800),
-                          ),
-                        ],
+                      Text(
+                        "Target: $targetDateStr",
+                        style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.w800),
                       ),
                     ],
                   ),
                 ),
 
-                // EDIT & DELETE BUTTONS
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    InkWell(
-                      onTap: () => _openEditJobModal(job, isDark),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(color: const Color(0xFF0284C7).withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.edit, size: 11, color: Color(0xFF0284C7)),
-                            SizedBox(width: 3),
-                            Text("Edit", style: TextStyle(color: Color(0xFF0284C7), fontSize: 9.5, fontWeight: FontWeight.bold)),
-                          ],
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: () => _openEditQuoteModal(job, isDark),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(color: const Color(0xFF0284C7).withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.edit, size: 11, color: Color(0xFF0284C7)),
+                                SizedBox(width: 3),
+                                Text("Edit", style: TextStyle(color: Color(0xFF0284C7), fontSize: 9.5, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: () => _deleteJob(job['id'], null),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(color: Colors.red.withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.delete_outline, size: 11, color: Colors.red),
+                                SizedBox(width: 3),
+                                Text("Delete", style: TextStyle(color: Colors.red, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 6),
-                    InkWell(
-                      onTap: () => _deleteJob(job['id'], null),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(color: Colors.red.withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.delete_outline, size: 11, color: Colors.red),
-                            SizedBox(width: 3),
-                            Text("Delete", style: TextStyle(color: Colors.red, fontSize: 9.5, fontWeight: FontWeight.bold)),
-                          ],
+                    const SizedBox(height: 4),
+
+                    // 👤 Created by: [NAME]
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.person_outline_rounded, size: 11, color: subC),
+                        const SizedBox(width: 3),
+                        Text(
+                          "Created by: $createdBy",
+                          style: TextStyle(
+                            color: subC,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+
+                    // 🔧 Built by: [BUILDER NAME] (Kiske Naam Par Ban Raha Hai)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.engineering_outlined,
+                          size: 11,
+                          color: assignedBuilder.isNotEmpty ? const Color(0xFF38BDF8) : subC,
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          assignedBuilder.isNotEmpty ? "Built by: $assignedBuilder" : "Built by: Not Assigned",
+                          style: TextStyle(
+                            color: assignedBuilder.isNotEmpty ? const Color(0xFF38BDF8) : subC,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ],
             ),
-
-            // 6. BOTTOM-RIGHT SUBTLE "CREATED BY" FOOTER (JAISA STATEMENT / INVOICE MEIN HOTA HAI)
-            if (author.isNotEmpty) ...[
-              const SizedBox(height: 5),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.person_rounded,
-                      size: 10.5,
-                      color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      "Created by: $author",
-                      style: TextStyle(
-                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -1754,27 +1866,29 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 }
 
 // =========================================================================
-// STANDALONE NATIVE FORM SCREEN
+// PURE QUOTATION FORM SCREEN (WITH BUILDER ASSIGNMENT DROPDOWN)
 // =========================================================================
-class FastJobFormScreen extends StatefulWidget {
+class NewQuoteFormScreen extends StatefulWidget {
   final bool isDark;
   final bool isEditMode;
   final Map<String, dynamic>? initialJob;
   final String? defaultJobNo;
   final String? defaultQuoteNo;
+  final List<String> availableWorkers;
   final String currentOperator;
   final List<String> clientSuggestions;
   final List<String> panelSuggestions;
   final List<String> specsSuggestions;
   final Future<void> Function(Map<String, dynamic>) onSaved;
 
-  const FastJobFormScreen({
+  const NewQuoteFormScreen({
     super.key,
     required this.isDark,
     required this.isEditMode,
     this.initialJob,
     this.defaultJobNo,
     this.defaultQuoteNo,
+    required this.availableWorkers,
     required this.currentOperator,
     required this.clientSuggestions,
     required this.panelSuggestions,
@@ -1783,28 +1897,22 @@ class FastJobFormScreen extends StatefulWidget {
   });
 
   @override
-  State<FastJobFormScreen> createState() => _FastJobFormScreenState();
+  State<NewQuoteFormScreen> createState() => _NewQuoteFormScreenState();
 }
 
-class _FastJobFormScreenState extends State<FastJobFormScreen> {
+class _NewQuoteFormScreenState extends State<NewQuoteFormScreen> {
   late DateTime startDateTime;
   late DateTime targetDateTime;
-  late DateTime poDateTime;
 
   late final TextEditingController jobNoCtrl;
-  late final TextEditingController clientCtrl;
-  late final TextEditingController itemOrPanelCtrl;
-  late final TextEditingController qtyCtrl;
   late final TextEditingController quoteNumberCtrl;
-  late final TextEditingController poNumberCtrl;
+  late final TextEditingController clientCtrl;
+  late final TextEditingController panelSpecCtrl;
   late final TextEditingController specsCtrl;
   late final TextEditingController quotePriceCtrl;
-  late final TextEditingController poPriceCtrl;
   late final TextEditingController targetDateCtrl;
 
-  String jobNature = 'PANEL';
-  String jobCategory = 'QUOTATION';
-  bool hasPo = false;
+  String? selectedBuilder;
   bool isSaving = false;
   String? localError;
   String existingAuthor = '';
@@ -1815,7 +1923,6 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
     final now = DateTime.now();
     startDateTime = now;
     targetDateTime = now.add(const Duration(days: 14));
-    poDateTime = now;
 
     if (widget.isEditMode && widget.initialJob != null) {
       final job = widget.initialJob!;
@@ -1834,33 +1941,33 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
         existingAuthor = widget.currentOperator;
       }
 
+      String initWorker = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
+      if (initWorker.isNotEmpty && widget.availableWorkers.contains(initWorker)) {
+        selectedBuilder = initWorker;
+      }
+
       final cleanSpecs = rawSpecs
           .replaceAll(RegExp(r'\[QUOTE:.*?\]'), '')
           .replaceAll(RegExp(r'\[PO:.*?\]'), '')
           .replaceAll(RegExp(r'\[BY:.*?\]'), '')
+          .replaceAll(RegExp(r'\[WORKER:.*?\]'), '')
           .trim();
 
       jobNoCtrl = TextEditingController(text: job['job_no'] ?? '');
-      clientCtrl = TextEditingController(text: job['client'] ?? '');
-      itemOrPanelCtrl = TextEditingController(text: job['panel_type'] ?? '');
-      qtyCtrl = TextEditingController(text: "1");
       quoteNumberCtrl = TextEditingController(text: currentQuoteNo);
-      poNumberCtrl = TextEditingController(text: job['po_number'] ?? '');
+      clientCtrl = TextEditingController(text: job['client'] ?? '');
+      panelSpecCtrl = TextEditingController(text: (job['panel_type'] ?? '').toString().replaceAll('[PANEL]', '').trim());
       specsCtrl = TextEditingController(text: cleanSpecs);
       quotePriceCtrl = TextEditingController(text: (job['quotation_amount'] ?? '').toString());
-      poPriceCtrl = TextEditingController(text: (job['invoice_amount'] ?? '').toString());
       targetDateCtrl = TextEditingController(text: job['target_date'] ?? _formatDate(targetDateTime));
     } else {
       existingAuthor = widget.currentOperator;
       jobNoCtrl = TextEditingController(text: widget.defaultJobNo ?? '');
-      clientCtrl = TextEditingController();
-      itemOrPanelCtrl = TextEditingController();
-      qtyCtrl = TextEditingController(text: "1");
       quoteNumberCtrl = TextEditingController(text: widget.defaultQuoteNo ?? '');
-      poNumberCtrl = TextEditingController();
+      clientCtrl = TextEditingController();
+      panelSpecCtrl = TextEditingController();
       specsCtrl = TextEditingController();
       quotePriceCtrl = TextEditingController();
-      poPriceCtrl = TextEditingController();
       targetDateCtrl = TextEditingController(text: _formatDate(targetDateTime));
     }
   }
@@ -1868,14 +1975,11 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
   @override
   void dispose() {
     jobNoCtrl.dispose();
-    clientCtrl.dispose();
-    itemOrPanelCtrl.dispose();
-    qtyCtrl.dispose();
     quoteNumberCtrl.dispose();
-    poNumberCtrl.dispose();
+    clientCtrl.dispose();
+    panelSpecCtrl.dispose();
     specsCtrl.dispose();
     quotePriceCtrl.dispose();
-    poPriceCtrl.dispose();
     targetDateCtrl.dispose();
     super.dispose();
   }
@@ -1895,7 +1999,6 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
     final Color cardBg = widget.isDark ? const Color(0xFF0C2232) : Colors.white;
     final Color textColor = widget.isDark ? Colors.white : const Color(0xFF0F172A);
     final Color subTextColor = widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-    final Color borderColor = widget.isDark ? const Color(0xFF1E3A52) : const Color(0xFFCBD5E1);
 
     return Scaffold(
       backgroundColor: screenBg,
@@ -1911,12 +2014,12 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.isEditMode ? "Edit Job Details" : (jobNature == 'PANEL' ? "New Control Panel Job" : "New Component / Spare Job"),
+              widget.isEditMode ? "Edit Quotation Details" : "New Quotation",
               style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w800),
             ),
             Row(
               children: [
-                Text("Author: ", style: TextStyle(color: subTextColor, fontSize: 10)),
+                Text("Created By: ", style: TextStyle(color: subTextColor, fontSize: 10)),
                 Text(existingAuthor, style: const TextStyle(color: Color(0xFF10B981), fontSize: 10, fontWeight: FontWeight.w900)),
               ],
             ),
@@ -1947,103 +2050,7 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                     ],
                   ),
                 ),
-              if (!widget.isEditMode) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() => jobNature = 'PANEL'),
-                        child: Container(
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: jobNature == 'PANEL' ? const Color(0xFFE88226) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: jobNature == 'PANEL' ? const Color(0xFFE88226) : borderColor),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text("Control Panel", style: TextStyle(color: jobNature == 'PANEL' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() => jobNature = 'ITEM'),
-                        child: Container(
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: jobNature == 'ITEM' ? const Color(0xFF0284C7) : borderColor),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text("Spare Item", style: TextStyle(color: jobNature == 'ITEM' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 12)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => setState(() => jobCategory = 'QUOTATION'),
-                        child: Container(
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: jobCategory == 'QUOTATION' ? const Color(0xFF8B5CF6) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFF8B5CF6)),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text("Quotation Stage", style: TextStyle(color: jobCategory == 'QUOTATION' ? Colors.white : const Color(0xFF8B5CF6), fontWeight: FontWeight.bold, fontSize: 11.5)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          if (!hasPo) {
-                            setState(() => localError = "Enable PO and specify the PO Number and Value before proceeding to Running!");
-                            return;
-                          }
-                          setState(() {
-                            jobCategory = 'RUNNING';
-                            localError = null;
-                          });
-                        },
-                        child: Container(
-                          height: 38,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          decoration: BoxDecoration(
-                            color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: jobCategory == 'RUNNING' ? const Color(0xFF10B981) : borderColor),
-                          ),
-                          alignment: Alignment.center,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              if (!hasPo) const Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.lock_outline_rounded, size: 13, color: Colors.grey)),
-                              Flexible(
-                                child: Text(
-                                  hasPo ? "Running Order" : "Running (Needs PO)",
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: jobCategory == 'RUNNING' ? Colors.white : subTextColor, fontWeight: FontWeight.bold, fontSize: 11.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-              ],
+
               Row(
                 children: [
                   Expanded(
@@ -2051,115 +2058,86 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _buildInput(label: "Quotation Reference *", hint: "e.g. QT-2026-101", ctrl: quoteNumberCtrl),
+                    child: _buildInput(label: "Quotation Ref (QT) *", hint: "e.g. QT-2026-101", ctrl: quoteNumberCtrl),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
-              if (!widget.isEditMode) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: hasPo ? const Color(0xFF10B981).withOpacity(0.12) : (widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9)),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: hasPo ? const Color(0xFF10B981) : borderColor),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Icon(Icons.verified_rounded, size: 16, color: hasPo ? const Color(0xFF10B981) : subTextColor),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text("Client Purchase Order (PO) Received?", maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w700)),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Switch(
-                        value: hasPo,
-                        activeColor: const Color(0xFF10B981),
-                        onChanged: (val) {
-                          setState(() {
-                            hasPo = val;
-                            if (!hasPo) jobCategory = 'QUOTATION';
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (hasPo) ...[
-                  Row(
-                    children: [
-                      Expanded(flex: 3, child: _buildInput(label: "Client PO Number *", hint: "e.g. PO/2026/894", ctrl: poNumberCtrl)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: _buildDatePicker(label: "PO Date", currentDate: poDateTime, onSelect: (dt) => setState(() => poDateTime = dt)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ] else ...[
-                _buildInput(label: "PO Number", hint: "e.g. PO/2026/894", ctrl: poNumberCtrl),
-                const SizedBox(height: 10),
-              ],
+
               _buildLiveSearchField(
                 label: "Client / Company Name *",
-                hint: "e.g. Jindal Steel, Reliance",
+                hint: "e.g. Basant Rubber, Jindal Steel",
                 ctrl: clientCtrl,
                 suggestions: widget.clientSuggestions,
               ),
               const SizedBox(height: 10),
-              Row(
+
+              _buildLiveSearchField(
+                label: "Panel / Machine Specification *",
+                hint: "e.g. 50 HP VFD Control Panel",
+                ctrl: panelSpecCtrl,
+                suggestions: widget.panelSuggestions,
+              ),
+              const SizedBox(height: 10),
+
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 3,
-                    child: _buildLiveSearchField(
-                      label: widget.isEditMode ? "Item / Panel Specifications" : (jobNature == 'PANEL' ? "Panel Specification *" : "Item Details *"),
-                      hint: "e.g. 50 HP VFD Control Panel",
-                      ctrl: itemOrPanelCtrl,
-                      suggestions: widget.panelSuggestions,
+                  Text("Assign Builder / Kaun Bana Raha Hai (Optional)", style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 3),
+                  Container(
+                    height: 42,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: widget.isDark ? const Color(0xFF0F2638) : const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: widget.isDark ? const Color(0xFF193B54) : const Color(0xFFCBD5E1)),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: selectedBuilder,
+                        hint: Text("Assign Builder (Optional)", style: TextStyle(color: subTextColor, fontSize: 11)),
+                        dropdownColor: cardBg,
+                        isExpanded: true,
+                        items: widget.availableWorkers.map((w) {
+                          return DropdownMenuItem<String>(
+                            value: w,
+                            child: Text("Panel Builder: $w", style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)),
+                          );
+                        }).toList(),
+                        onChanged: (val) => setState(() => selectedBuilder = val),
+                      ),
                     ),
                   ),
-                  if (!widget.isEditMode && jobNature == 'ITEM') ...[
-                    const SizedBox(width: 8),
-                    Expanded(flex: 1, child: _buildInput(label: "Qty", hint: "1", ctrl: qtyCtrl, keyboard: TextInputType.number)),
-                  ],
                 ],
               ),
               const SizedBox(height: 10),
+
               _buildLiveSearchField(
-                label: "Scope of Work / Spares",
+                label: "Scope of Work / Instructions",
                 hint: "e.g. Wiring, Programming, Busbar sizing",
                 ctrl: specsCtrl,
                 suggestions: widget.specsSuggestions,
               ),
               const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildInput(label: "Quoted Price (₹) *", hint: "e.g. 20000", ctrl: quotePriceCtrl, keyboard: TextInputType.number),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _buildInput(label: hasPo ? "PO Amount (₹) *" : "Final / PO Price (₹)", hint: "e.g. 15000", ctrl: poPriceCtrl, keyboard: TextInputType.number),
-                  ),
-                ],
+
+              _buildInput(
+                label: "Quoted Price (₹) *",
+                hint: "e.g. 25000",
+                ctrl: quotePriceCtrl,
+                keyboard: TextInputType.number,
               ),
               const SizedBox(height: 10),
-              // DEDICATED FULL WIDTH TARGET DELIVERY DATE FIELD
+
               Row(
                 children: [
                   if (!widget.isEditMode) ...[
                     Expanded(
-                      child: _buildDatePicker(label: "Start Date", currentDate: startDateTime, onSelect: (dt) => setState(() => startDateTime = dt)),
+                      child: _buildDatePicker(
+                        label: "Start Date",
+                        currentDate: startDateTime,
+                        onSelect: (dt) => setState(() => startDateTime = dt),
+                      ),
                     ),
                     const SizedBox(width: 10),
                   ],
@@ -2177,13 +2155,14 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
+
               SizedBox(
                 width: double.infinity,
                 height: 46,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: widget.isEditMode ? const Color(0xFF0284C7) : const Color(0xFFE88226),
+                    backgroundColor: const Color(0xFF8B5CF6),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                   onPressed: isSaving ? null : () async {
@@ -2192,13 +2171,13 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                       return;
                     }
 
-                    if (clientCtrl.text.trim().isEmpty || itemOrPanelCtrl.text.trim().isEmpty) {
-                      setState(() => localError = "Client Name and Item/Panel specification are required!");
+                    if (clientCtrl.text.trim().isEmpty || panelSpecCtrl.text.trim().isEmpty) {
+                      setState(() => localError = "Client Name and Panel specification are required!");
                       return;
                     }
 
-                    if (!widget.isEditMode && jobCategory == 'RUNNING' && (!hasPo || poNumberCtrl.text.trim().isEmpty)) {
-                      setState(() => localError = "PO Number is mandatory to move the job to Running stage!");
+                    if (quotePriceCtrl.text.trim().isEmpty) {
+                      setState(() => localError = "Quoted Price is required!");
                       return;
                     }
 
@@ -2209,25 +2188,22 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
 
                     final finalJobNo = jobNoCtrl.text.trim();
                     final quoteTag = quoteNumberCtrl.text.trim().isNotEmpty ? " [QUOTE: ${quoteNumberCtrl.text.trim()}]" : "";
-                    final poDetailsStr = (hasPo || poNumberCtrl.text.trim().isNotEmpty) ? " [PO: ${poNumberCtrl.text.trim()} | Date: ${_formatDate(poDateTime)}]" : "";
                     final authorTag = " [BY: $existingAuthor]";
-                    final String finalSpecs = "${specsCtrl.text.trim()}$quoteTag$poDetailsStr$authorTag".trim();
+                    final workerTag = selectedBuilder != null && selectedBuilder!.isNotEmpty ? " [WORKER: $selectedBuilder]" : "";
+                    final String finalSpecs = "${specsCtrl.text.trim()}$quoteTag$authorTag$workerTag".trim();
 
                     if (widget.isEditMode) {
                       final Map<String, dynamic> updateData = {
                         'job_no': finalJobNo,
                         'client': clientCtrl.text.trim(),
-                        'panel_type': itemOrPanelCtrl.text.trim(),
+                        'panel_type': "[PANEL] ${panelSpecCtrl.text.trim()}",
                         'quotation_amount': quotePriceCtrl.text.trim(),
                         'specs_detail': finalSpecs,
                         'created_by': existingAuthor,
                         'target_date': targetDateCtrl.text.trim().isNotEmpty ? targetDateCtrl.text.trim() : _formatDate(targetDateTime),
                       };
-                      if (poPriceCtrl.text.trim().isNotEmpty) {
-                        updateData['invoice_amount'] = poPriceCtrl.text.trim();
-                      }
-                      if (poNumberCtrl.text.trim().isNotEmpty) {
-                        updateData['po_number'] = poNumberCtrl.text.trim();
+                      if (selectedBuilder != null && selectedBuilder!.isNotEmpty) {
+                        updateData['assigned_to'] = selectedBuilder;
                       }
                       try {
                         await widget.onSaved(updateData);
@@ -2238,28 +2214,21 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                         });
                       }
                     } else {
-                      final String typeTag = jobNature == 'ITEM' ? "[ITEM: ${qtyCtrl.text.trim()} Nos] " : "[PANEL] ";
-                      final String fullDesc = "$typeTag${itemOrPanelCtrl.text.trim()}";
-
                       final Map<String, dynamic> insertPayload = {
                         'job_no': finalJobNo,
                         'client': clientCtrl.text.trim(),
-                        'panel_type': fullDesc,
+                        'panel_type': "[PANEL] ${panelSpecCtrl.text.trim()}",
                         'specs_detail': finalSpecs,
                         'quotation_amount': quotePriceCtrl.text.trim(),
-                        'invoice_amount': poPriceCtrl.text.trim().isNotEmpty ? poPriceCtrl.text.trim() : null,
-                        'stage': jobCategory == 'QUOTATION'
-                            ? 'Quotation / Commercial Review'
-                            : (jobNature == 'ITEM' ? 'Testing & Servicing Stage' : 'Fabrication & Layout Stage'),
-                        'status': jobCategory,
-                        'progress': jobCategory == 'QUOTATION' ? 0.05 : 0.25,
+                        'stage': 'Quotation / Commercial Review',
+                        'status': 'QUOTATION',
+                        'progress': 0.05,
                         'start_date': _formatDate(startDateTime),
                         'target_date': targetDateCtrl.text.trim().isNotEmpty ? targetDateCtrl.text.trim() : _formatDate(targetDateTime),
                         'created_by': existingAuthor,
                       };
-
-                      if (hasPo && poNumberCtrl.text.trim().isNotEmpty) {
-                        insertPayload['po_number'] = poNumberCtrl.text.trim();
+                      if (selectedBuilder != null && selectedBuilder!.isNotEmpty) {
+                        insertPayload['assigned_to'] = selectedBuilder;
                       }
 
                       try {
@@ -2275,9 +2244,7 @@ class _FastJobFormScreenState extends State<FastJobFormScreen> {
                   child: isSaving
                       ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2))
                       : Text(
-                          widget.isEditMode
-                              ? "Save Changes"
-                              : (jobCategory == 'QUOTATION' ? "Save Quotation" : "Start Production Order (With PO)"),
+                          widget.isEditMode ? "Update Quotation" : "Save Quotation",
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                 ),

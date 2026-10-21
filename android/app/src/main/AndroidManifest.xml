@@ -13,6 +13,17 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
 
+    <!-- 4. MICROPHONE & SPEECH RECOGNITION PERMISSIONS -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.BLUETOOTH"/>
+
+    <!-- 5. ANDROID 11+ GOOGLE SPEECH SERVICE QUERY -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:label="NEXTGEN CONTROLS"
         android:name="${applicationName}"

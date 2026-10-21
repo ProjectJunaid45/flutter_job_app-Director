@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shorebird_code_push/shorebird_code_push.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'annual_analytics_screen.dart';
+import 'worker_rating_sheet.dart';
 import 'sing_in.dart';
 
 // GLOBAL THEME CONTROLLER
@@ -55,16 +56,14 @@ class _CustomDrawerState extends State<CustomDrawer> {
       final patch = await _shorebirdUpdater.readCurrentPatch();
       if (patch != null && mounted) {
         setState(() {
-          // Base build = v1, Patch 1 = v2, Patch 2 = v3 ...
           _appPatchVersion = 1 + patch.number;
         });
       }
     } catch (_) {
-      // Offline ya desktop fallback ke liye default v1 rahega
+      // Offline fallback
     }
   }
 
-  // --- DATE PARSER HELPER ---
   DateTime? _parseJobDate(dynamic dateStr) {
     if (dateStr == null) return null;
     final str = dateStr.toString().trim();
@@ -93,7 +92,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return null;
   }
 
-  // --- CROSS-PLATFORM DOWNLOAD DIRECTORY HELPER (WINDOWS + MOBILE) ---
   Future<Directory> _getTargetDirectory(bool isDownload) async {
     if (!isDownload) {
       return await getApplicationDocumentsDirectory();
@@ -124,7 +122,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return fallback;
   }
 
-  // --- CSV GENERATOR ---
   String _buildCsvContent(List<Map<String, dynamic>> records, DateTime startDate, DateTime endDate) {
     final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
     final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
@@ -174,7 +171,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return csv.toString();
   }
 
-  // --- PDF GENERATOR ---
   pw.Document _buildPdfDocument(List<Map<String, dynamic>> records, DateTime startDate, DateTime endDate) {
     final fromStr = "${startDate.day}/${startDate.month}/${startDate.year}";
     final toStr = "${endDate.day}/${endDate.month}/${endDate.year}";
@@ -233,7 +229,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
-                      "PRIVATE LIMITED • Simplify Your Industry",
+                      "PRIVATE LIMITED \u2022 Simplify Your Industry",
                       style: const pw.TextStyle(color: PdfColors.grey400, fontSize: 8.5),
                     ),
                   ],
@@ -318,7 +314,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return pdf;
   }
 
-  // --- 1. EXCEL EXPORT & DOWNLOAD ---
   Future<void> _handleExcelOperation(
       BuildContext context, DateTime startDate, DateTime endDate, {required bool isDownload}) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -396,7 +391,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     }
   }
 
-  // --- 2. PDF EXPORT & DOWNLOAD ---
   Future<void> _handlePdfOperation(
       BuildContext context, DateTime startDate, DateTime endDate, {required bool isDownload}) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -474,7 +468,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
     }
   }
 
-  // --- 3. STATEMENT DATE SELECTOR DIALOG WITH SHARE & DOWNLOAD ---
   void _openStatementModal(BuildContext context, bool isDark) {
     DateTime startDate = DateTime(DateTime.now().year, DateTime.now().month, 1);
     DateTime endDate = DateTime.now();
@@ -530,11 +523,8 @@ class _CustomDrawerState extends State<CustomDrawer> {
                       style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
                     ),
                     const SizedBox(height: 16),
-
-                    // DATES BOXES
                     Row(
                       children: [
-                        // FROM DATE
                         Expanded(
                           child: GestureDetector(
                             onTap: () async {
@@ -589,8 +579,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
                           ),
                         ),
                         const SizedBox(width: 12),
-
-                        // TO DATE
                         Expanded(
                           child: GestureDetector(
                             onTap: () async {
@@ -646,10 +634,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 18),
-
-                    // EXCEL ACTIONS (DOWNLOAD & SHARE)
                     const Text(
                       "EXCEL (.CSV) STATEMENT",
                       style: TextStyle(color: Color(0xFF10B981), fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
@@ -700,10 +685,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 16),
-
-                    // PDF ACTIONS (DOWNLOAD & SHARE)
                     const Text(
                       "PDF STATEMENT OF OPERATIONS",
                       style: TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5),
@@ -781,7 +763,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
           child: SafeArea(
             child: Column(
               children: [
-                // 1. BRAND HEADER
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 14.0),
                   decoration: BoxDecoration(
@@ -887,7 +868,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  "PRIVATE LIMITED • Simplify Your Industry",
+                                  "PRIVATE LIMITED \u2022 Simplify Your Industry",
                                   style: TextStyle(
                                     color: subColor,
                                     fontSize: 8,
@@ -900,8 +881,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
                         ],
                       ),
                       const SizedBox(height: 10),
-
-                      // OPERATOR STATUS BADGE
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -944,8 +923,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
                     ],
                   ),
                 ),
-
-                // 2. NAVIGATION TILES
                 Expanded(
                   child: ListView(
                     physics: const BouncingScrollPhysics(),
@@ -962,6 +939,33 @@ class _CustomDrawerState extends State<CustomDrawer> {
                       ),
                       const SizedBox(height: 8),
 
+                      // RATE WORKER PERFORMANCE TILE
+                      _buildDrawerTile(
+                        context: context,
+                        icon: Icons.star_rate_rounded,
+                        title: "Rate Worker Performance",
+                        subtitle: "5-Star review, badges & feedback",
+                        isActive: false,
+                        isDark: isDark,
+                        onTap: () async {
+                          Navigator.pop(context);
+                          final res = await Supabase.instance.client
+                              .from('workers')
+                              .select('username')
+                              .order('username', ascending: true);
+
+                          final List<String> workers = List<Map<String, dynamic>>.from(res)
+                              .map((e) => (e['username'] ?? '').toString().trim().toUpperCase())
+                              .where((w) => w.isNotEmpty)
+                              .toList();
+
+                          if (context.mounted) {
+                            WorkerRatingSheet.show(context, availableWorkers: workers);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 8),
+
                       _buildDrawerTile(
                         context: context,
                         icon: Icons.analytics_rounded,
@@ -971,15 +975,17 @@ class _CustomDrawerState extends State<CustomDrawer> {
                         isDark: isDark,
                         onTap: () {
                           Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (context) => const AnnualAnalyticsScreen()),
-                          );
+                          if (widget.activeRoute != 'analytics') {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const AnnualAnalyticsScreen(),
+                              ),
+                            );
+                          }
                         },
                       ),
                       const SizedBox(height: 8),
-
                       _buildDrawerTile(
                         context: context,
                         icon: Icons.receipt_long_rounded,
@@ -995,8 +1001,6 @@ class _CustomDrawerState extends State<CustomDrawer> {
                     ],
                   ),
                 ),
-
-                // 3. LOGOUT & FOOTER (DYNAMIC VERSION)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
                   decoration: BoxDecoration(
@@ -1043,7 +1047,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        "NEXTGEN OS • v$_appPatchVersion (Industrial Edition)",
+                        "NEXTGEN OS \u2022 v$_appPatchVersion (Industrial Edition)",
                         style: TextStyle(
                           color: subColor,
                           fontSize: 9,
