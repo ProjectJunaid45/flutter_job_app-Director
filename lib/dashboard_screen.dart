@@ -21,6 +21,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   List<Map<String, dynamic>> _jobCards = [];
   List<String> _availableWorkers = ['MALIK10'];
+  List<Map<String, dynamic>> _workersFullList = [];
   bool _isLoading = true;
   String _currentOperator = 'JUNAID';
 
@@ -52,16 +53,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
   Future<void> _fetchWorkers() async {
     try {
-      final res = await _supabase.from('workers').select('username');
+      final res = await _supabase.from('workers').select().order('username');
       if (res.isNotEmpty && mounted) {
         final list = List<Map<String, dynamic>>.from(res)
             .map((w) => (w['username'] ?? '').toString().trim().toUpperCase())
             .where((w) => w.isNotEmpty)
             .toSet()
             .toList();
-        if (list.isNotEmpty) {
-          setState(() => _availableWorkers = list);
-        }
+        setState(() {
+          _workersFullList = List<Map<String, dynamic>>.from(res);
+          if (list.isNotEmpty) {
+            _availableWorkers = list;
+          }
+        });
       }
     } catch (_) {}
   }
@@ -113,7 +117,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         .replaceAll(RegExp(r'\[PO:.*?\]'), '')
         .replaceAll(RegExp(r'\[BY:.*?\]'), '')
         .replaceAll(RegExp(r'\[WORKER:.*?\]'), '')
+        .replaceAll(RegExp(r'\[PREV_WORKER:.*?\]'), '')
+        .replaceAll(RegExp(r'\[TRANSFER:.*?\]'), '')
+        .replaceAll(RegExp(r'\[SCORE:.*?\]'), '')
         .trim();
+  }
+
+  static String _extractScoreBadge(String specs) {
+    final reg = RegExp(r'\[SCORE:\s*(\d+)');
+    final match = reg.firstMatch(specs);
+    if (match != null && match.groupCount >= 1) {
+      return "${match.group(1)}/100";
+    }
+    return '';
   }
 
   List<String> _getUniqueSuggestions(String fieldKey, {bool isSpec = false}) {
@@ -134,6 +150,115 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       }
     }
     return results.toList();
+  }
+
+  // =========================================================================
+  // 🔄 RE-ASSIGNMENT MODAL WITH MANDATORY REASON DIALOG
+  // =========================================================================
+  Future<void> _handleWorkerReassignment(Map<String, dynamic> job, String newWorker) async {
+    final oldWorker = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
+    if (oldWorker == newWorker) return;
+
+    final reasonCtrl = TextEditingController();
+git status
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0C2232),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Row(
+            children: const [
+              Icon(Icons.swap_horiz_rounded, color: Color(0xFFE88226), size: 22),
+              SizedBox(width: 8),
+              Text("Reassign Panel Builder", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                "Transferring ${job['job_no']} from $oldWorker to $newWorker.",
+                style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                "Enter Transfer Reason (Mandatory Audit): *",
+                style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: reasonCtrl,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: const Color(0xFF091A26),
+                  hintText: "e.g. Worker on leave, Urgent delivery schedule, Skill required",
+                  hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF193B54))),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "* Note: $oldWorker's mobile app will display a crossed-out card with this reason.",
+                style: const TextStyle(color: Color(0xFFE88226), fontSize: 9.5, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+              onPressed: () {
+                if (reasonCtrl.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Reassignment reason is required!"), backgroundColor: Colors.red),
+                  );
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
+              child: const Text("Confirm Transfer", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      final reasonText = reasonCtrl.text.trim();
+      String curSpecs = (job['specs_detail'] ?? '').toString();
+
+      curSpecs = curSpecs.replaceAll(RegExp(r'\[TRANSFER:.*?\]'), '');
+      curSpecs = curSpecs.replaceAll(RegExp(r'\[WORKER:.*?\]'), '');
+
+      final transferTag = "[TRANSFER:FROM:$oldWorker|TO:$newWorker|REASON:$reasonText|BY:$_currentOperator]";
+      final prevWorkerTag = "[PREV_WORKER:$oldWorker]";
+      final newWorkerTag = "[WORKER:$newWorker]";
+
+      curSpecs = "$curSpecs $transferTag $prevWorkerTag $newWorkerTag".trim();
+
+      await _updateJobStatus(job['id'], {
+        'assigned_to': newWorker,
+        'specs_detail': curSpecs,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Panel transferred to $newWorker. Reason recorded for $oldWorker."),
+            backgroundColor: const Color(0xFF10B981),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _deleteJob(dynamic jobId, BuildContext? sheetContext) async {
@@ -168,7 +293,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                   onPressed: () => Navigator.pop(dialogCtx, false),
-                  child: const Text("No", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  child: const Text("Cancel", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                 ),
               ),
               const SizedBox(width: 10),
@@ -179,7 +304,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                   onPressed: () => Navigator.pop(dialogCtx, true),
-                  child: const Text("Yes", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                  child: const Text("Delete", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
                 ),
               ),
             ],
@@ -270,10 +395,334 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
+  // =========================================================================
+  // ⚙️ 100-MARK ELECTRICAL & AUTOMATION QUALITY INSPECTION SHEET (DIRECTOR)
+  // =========================================================================
+  void _openDirector100MarkInspectionSheet({
+    required String targetWorker,
+    String? jobNo,
+    int? jobId,
+  }) {
+    int wiring = 23;      // Max 25
+    int dressing = 18;    // Max 20
+    int ferrule = 14;     // Max 15
+    int plcSignal = 14;   // Max 15
+    int mounting = 14;    // Max 15
+    int safety = 9;       // Max 10
+
+    final feedbackCtrl = TextEditingController(text: "Wiring torque and ferrule dressing verified OK.");
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF091722),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final int totalScore = wiring + dressing + ferrule + plcSignal + mounting + safety;
+            final double starRating = (totalScore / 20.0).clamp(1.0, 5.0);
+
+            String qualityTag;
+            Color badgeColor;
+            if (totalScore >= 90) {
+              qualityTag = "MASTER BUILDER";
+              badgeColor = const Color(0xFF10B981);
+            } else if (totalScore >= 80) {
+              qualityTag = "FACTORY STANDARD";
+              badgeColor = const Color(0xFF38BDF8);
+            } else if (totalScore >= 70) {
+              qualityTag = "AVERAGE FACTORY OUTPUT";
+              badgeColor = const Color(0xFFE88226);
+            } else {
+              qualityTag = "NEEDS RE-WORK";
+              badgeColor = const Color(0xFFEF4444);
+            }
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(16, 14, 16, MediaQuery.of(context).viewInsets.bottom + 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(width: 40, height: 4, decoration: BoxDecoration(color: const Color(0xFF244866), borderRadius: BorderRadius.circular(2))),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              jobNo != null ? "$jobNo Inspection" : "Worker Quality Audit",
+                              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
+                            ),
+                            Text("Builder: $targetWorker", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: badgeColor.withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: badgeColor),
+                          ),
+                          child: Text(
+                            "$totalScore / 100",
+                            style: TextStyle(color: badgeColor, fontSize: 15, fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          "Rating: ${starRating.toStringAsFixed(1)} ★  •  ",
+                          style: const TextStyle(color: Color(0xFFE88226), fontSize: 11.5, fontWeight: FontWeight.w800),
+                        ),
+                        Text(
+                          qualityTag,
+                          style: TextStyle(color: badgeColor, fontSize: 11.5, fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                    const Divider(color: Color(0xFF193B54), height: 18),
+
+                    _buildSliderItem("1. Wiring & Crimping Quality (Max 25)", wiring, 25, (v) => setModalState(() => wiring = v)),
+                    _buildSliderItem("2. Wiring Dressing & Aesthetics (Max 20)", dressing, 20, (v) => setModalState(() => dressing = v)),
+                    _buildSliderItem("3. Ferrule & Tagging Match (Max 15)", ferrule, 15, (v) => setModalState(() => ferrule = v)),
+                    _buildSliderItem("4. PLC & Signal Noise Isolation (Max 15)", plcSignal, 15, (v) => setModalState(() => plcSignal = v)),
+                    _buildSliderItem("5. Component Mounting Alignment (Max 15)", mounting, 15, (v) => setModalState(() => mounting = v)),
+                    _buildSliderItem("6. Safety & QC Factory Check (Max 10)", safety, 10, (v) => setModalState(() => safety = v)),
+
+                    const SizedBox(height: 10),
+                    const Text("Director Quality Review Remark:", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    TextField(
+                      controller: feedbackCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: const Color(0xFF0C2030),
+                        hintText: "Enter inspection remarks...",
+                        hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF193B54))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    SizedBox(
+                      width: double.infinity,
+                      height: 44,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                        icon: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+                        label: const Text("Save & Publish Quality Score", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                        onPressed: () async {
+                          final scoreTagString = "[SCORE: $totalScore|W:$wiring|D:$dressing|F:$ferrule|P:$plcSignal|M:$mounting|S:$safety]";
+
+                          try {
+                            await _supabase.from('workers').upsert({
+                              'username': targetWorker,
+                              'rating': starRating,
+                              'rating_tag': qualityTag,
+                              'rating_comment': feedbackCtrl.text.trim(),
+                              'score_100': totalScore,
+                              'qc_breakdown': scoreTagString,
+                            });
+                          } catch (_) {}
+
+                          if (jobId != null) {
+                            try {
+                              final existing = _jobCards.firstWhere((j) => j['id'] == jobId);
+                              String curSpecs = (existing['specs_detail'] ?? '').toString();
+                              curSpecs = curSpecs.replaceAll(RegExp(r'\[SCORE:.*?\]'), '').trim();
+                              curSpecs = "$curSpecs $scoreTagString";
+
+                              await _supabase.from('job_cards').update({
+                                'status': 'COMPLETED',
+                                'stage': 'QC Passed (Score: $totalScore/100 • $qualityTag)',
+                                'progress': 0.90,
+                                'specs_detail': curSpecs,
+                              }).eq('id', jobId);
+                            } catch (_) {}
+                          }
+
+                          await _fetchJobCards();
+                          await _fetchWorkers();
+
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Quality score published for $targetWorker ($totalScore/100 • $qualityTag)"),
+                                backgroundColor: const Color(0xFF10B981),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSliderItem(String title, int val, int max, Function(int) onChanged) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w600)),
+            ),
+            Text("$val / $max", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w900)),
+          ],
+        ),
+        SliderTheme(
+          data: SliderThemeData(
+            trackHeight: 3,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+            activeTrackColor: const Color(0xFF0284C7),
+            inactiveTrackColor: const Color(0xFF193B54),
+            thumbColor: const Color(0xFF38BDF8),
+          ),
+          child: Slider(
+            value: val.toDouble(),
+            min: 0,
+            max: max.toDouble(),
+            divisions: max,
+            onChanged: (v) => onChanged(v.toInt()),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _openWorkerScoresLeaderboard() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0C2232),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) {
+        final activeWorkers = _workersFullList.isNotEmpty
+            ? _workersFullList
+            : _availableWorkers.map((w) => {'username': w, 'full_name': w, 'score_100': 85, 'rating': 4.2, 'rating_tag': 'FACTORY STANDARD'}).toList();
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: const [
+                  Text("Worker Quality Scorecard (100 Marks)", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
+                  Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 20),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...activeWorkers.map((w) {
+                final uName = (w['username'] ?? '').toString();
+                final fName = (w['full_name'] ?? uName).toString();
+                final int score = (w['score_100'] as num?)?.toInt() ?? 85;
+                final double stars = (w['rating'] as num?)?.toDouble() ?? 4.2;
+                final tag = (w['rating_tag'] ?? 'FACTORY STANDARD').toString();
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F2638),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF1E3E5A)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0284C7).withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.person_rounded, color: Color(0xFF38BDF8), size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text("$fName ($uName)", style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            Text("$tag • ${stars.toStringAsFixed(1)} ★", style: const TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF10B981).withOpacity(0.18),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: const Color(0xFF10B981)),
+                            ),
+                            child: Text(
+                              "$score / 100",
+                              style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          InkWell(
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _openDirector100MarkInspectionSheet(targetWorker: uName);
+                            },
+                            child: const Text("Audit Worker ➔", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _openMonthlyGraphModal(String categoryLabel, Color themeColor, bool isDark) {
     final now = DateTime.now();
     int selectedMonthIndex = now.month - 1;
-    final currentYear = now.year.toString();
+    int selectedYear = now.year;
 
     final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     final upperCat = categoryLabel.toUpperCase().trim();
@@ -321,10 +770,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
+            final String filterYearStr = selectedYear.toString();
+
             List<int> monthlyCounts = List.filled(12, 0);
             for (var job in categoryJobs) {
               final sDate = (job['start_date'] ?? job['target_date'] ?? '').toString();
-              if (sDate.contains(currentYear)) {
+              if (sDate.contains(filterYearStr)) {
                 for (int m = 0; m < 12; m++) {
                   if (sDate.toLowerCase().contains(months[m].toLowerCase())) {
                     monthlyCounts[m]++;
@@ -340,7 +791,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             final selMonthName = months[selectedMonthIndex];
             final selJobs = categoryJobs.where((j) {
               final sDate = (j['start_date'] ?? j['target_date'] ?? '').toString();
-              return sDate.contains(currentYear) && sDate.toLowerCase().contains(selMonthName.toLowerCase());
+              return sDate.contains(filterYearStr) && sDate.toLowerCase().contains(selMonthName.toLowerCase());
             }).toList();
 
             double selMonthValuation = 0.0;
@@ -358,17 +809,43 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 10, height: 10, decoration: BoxDecoration(color: themeColor, shape: BoxShape.circle)),
+                          const SizedBox(width: 8),
+                          Text(
+                            "$categoryLabel Pipeline",
+                            style: TextStyle(color: primaryText, fontSize: 14, fontWeight: FontWeight.w900),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: containerBg,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: borderClr),
+                        ),
                         child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Container(width: 10, height: 10, decoration: BoxDecoration(color: themeColor, shape: BoxShape.circle)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                "$categoryLabel Stage Pipeline ($currentYear)",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: primaryText, fontSize: 14.5, fontWeight: FontWeight.w900),
+                            InkWell(
+                              onTap: () => setSheetState(() => selectedYear--),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(Icons.arrow_left_rounded, size: 18, color: themeColor),
+                              ),
+                            ),
+                            Text(
+                              "$selectedYear",
+                              style: TextStyle(color: primaryText, fontSize: 12, fontWeight: FontWeight.w900),
+                            ),
+                            InkWell(
+                              onTap: () => setSheetState(() => selectedYear++),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(Icons.arrow_right_rounded, size: 18, color: themeColor),
                               ),
                             ),
                           ],
@@ -476,7 +953,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          "$selMonthName $currentYear: ${selJobs.length} Processed",
+                          "$selMonthName $selectedYear: ${selJobs.length} Processed",
                           style: TextStyle(color: themeColor, fontSize: 12, fontWeight: FontWeight.w900),
                         ),
                         Text(
@@ -487,12 +964,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text("Pipeline Orders in $selMonthName:", style: TextStyle(color: secondaryText, fontSize: 11, fontWeight: FontWeight.bold)),
+                  Text("Pipeline Orders in $selMonthName $selectedYear:", style: TextStyle(color: secondaryText, fontSize: 11, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
                   Expanded(
                     child: selJobs.isEmpty
                         ? Center(
-                            child: Text("No pipeline orders for $selMonthName $currentYear", style: TextStyle(color: secondaryText, fontSize: 11.5, fontWeight: FontWeight.w600)),
+                            child: Text("No pipeline orders for $selMonthName $selectedYear", style: TextStyle(color: secondaryText, fontSize: 11.5, fontWeight: FontWeight.w600)),
                           )
                         : ListView.separated(
                             physics: const BouncingScrollPhysics(),
@@ -601,10 +1078,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
+  // =========================================================================
+  // WORKFLOW ACTION MODAL: BUILDER RE-ASSIGNMENT ON ALL WORKFLOW STAGES
+  // =========================================================================
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
     final reasonCtrl = TextEditingController(text: job['pending_reason'] ?? '');
-
     final poNumberCtrl = TextEditingController();
 
     final rawQuotationPrice = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
@@ -649,7 +1128,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   const Icon(Icons.hub_rounded, color: Color(0xFF0284C7), size: 18),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text("${job['job_no']} Workflow", style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                    child: Text("${job['job_no']} Workflow & Builder", style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ],
               ),
@@ -674,6 +1153,49 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       ),
                     ),
                     const SizedBox(height: 10),
+
+                    // ⭐ UNIVERSAL BUILDER RE-ASSIGNMENT (ACTIVE ACROSS ALL STAGES)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("Assigned Builder:", style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                        Text(selectedWorker, style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.w900)),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Container(
+                      height: 40,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: fieldBg,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
+                          hint: Text("Reassign Builder", style: TextStyle(color: subTextColor, fontSize: 11)),
+                          dropdownColor: dialogBg,
+                          isExpanded: true,
+                          icon: const Icon(Icons.swap_horiz_rounded, color: Color(0xFFE88226), size: 20),
+                          items: _availableWorkers.map((w) {
+                            return DropdownMenuItem<String>(
+                              value: w,
+                              child: Text("Builder: $w", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
+                            );
+                          }).toList(),
+                          onChanged: (val) async {
+                            if (val != null && val != selectedWorker) {
+                              Navigator.pop(ctx);
+                              await _handleWorkerReassignment(job, val);
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Divider(color: dividerColor),
+                    const SizedBox(height: 6),
 
                     if (status == 'QUOTATION') ...[
                       Text("Client Purchase Order (PO):", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
@@ -704,39 +1226,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
                       ),
-                      const SizedBox(height: 10),
-
-                      const Text("Assign Builder (Kisko Dena Hai): *", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.w800)),
-                      const SizedBox(height: 5),
-                      Container(
-                        height: 42,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        decoration: BoxDecoration(
-                          color: fieldBg,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
-                            hint: Text("Select Worker", style: TextStyle(color: subTextColor, fontSize: 11)),
-                            dropdownColor: dialogBg,
-                            isExpanded: true,
-                            icon: const Icon(Icons.engineering_rounded, color: Color(0xFF38BDF8), size: 18),
-                            items: _availableWorkers.map((w) {
-                              return DropdownMenuItem<String>(
-                                value: w,
-                                child: Text("Panel Builder: $w", style: TextStyle(color: textColor, fontSize: 12, fontWeight: FontWeight.bold)),
-                              );
-                            }).toList(),
-                            onChanged: (val) {
-                              if (val != null) {
-                                setDialogState(() => selectedWorker = val);
-                              }
-                            },
-                          ),
-                        ),
-                      ),
                       const SizedBox(height: 12),
 
                       SizedBox(
@@ -749,7 +1238,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           onPressed: () async {
                             if (poNumberCtrl.text.trim().isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text("PO Number daalna zaroori hai!"), backgroundColor: Colors.red),
+                                const SnackBar(content: Text("PO Number is required!"), backgroundColor: Colors.red),
                               );
                               return;
                             }
@@ -798,50 +1287,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
 
                     if (status == 'RUNNING') ...[
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text("Builder Assigned:", style: TextStyle(color: subTextColor, fontSize: 11)),
-                          Text(selectedWorker, style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.w900)),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        height: 38,
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        decoration: BoxDecoration(
-                          color: fieldBg,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1)),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
-                            hint: Text("Re-assign Builder", style: TextStyle(color: subTextColor, fontSize: 11)),
-                            dropdownColor: dialogBg,
-                            isExpanded: true,
-                            items: _availableWorkers.map((w) {
-                              return DropdownMenuItem<String>(
-                                value: w,
-                                child: Text("Change Builder: $w", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
-                              );
-                            }).toList(),
-                            onChanged: (val) async {
-                              if (val != null) {
-                                setDialogState(() => selectedWorker = val);
-                                String curSpecs = (job['specs_detail'] ?? '').toString();
-                                curSpecs = curSpecs.replaceAll(RegExp(r'\[WORKER:.*?\]'), '').trim();
-                                curSpecs = "$curSpecs [WORKER: $val]";
-                                await _updateJobStatus(job['id'], {
-                                  'assigned_to': val,
-                                  'specs_detail': curSpecs,
-                                });
-                              }
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
                       Text("Update Stage Progress:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
                       Wrap(
@@ -877,7 +1322,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         controller: reasonCtrl,
                         style: TextStyle(color: textColor, fontSize: 11.5),
                         decoration: InputDecoration(
-                          hintText: "Hold / Cancellation reason",
+                          hintText: "Reason for hold or cancellation",
                           hintStyle: TextStyle(color: subTextColor, fontSize: 10.5),
                           filled: true,
                           fillColor: fieldBg,
@@ -947,7 +1392,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               child: Text(
                                 job['pending_reason'] != null && job['pending_reason'].toString().isNotEmpty
                                     ? "Reason: ${job['pending_reason']}"
-                                    : "Job is currently on hold. Move back to Running or Cancel the order.",
+                                    : "Job is currently on hold. Resume work or cancel this order.",
                                 style: const TextStyle(color: Color(0xFFD97706), fontSize: 11, fontWeight: FontWeight.w600),
                               ),
                             ),
@@ -963,7 +1408,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
                           icon: const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 17),
-                          label: const Text("Resume Work ➔ Back to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
+                          label: const Text("Resume Work ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
                             await _updateJobStatus(job['id'], {
                               'status': 'RUNNING',
@@ -981,7 +1426,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
                           icon: const Icon(Icons.cancel_rounded, color: Colors.white, size: 17),
-                          label: const Text("Drop Order ➔ Mark CANCELLED", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
+                          label: const Text("Cancel Order", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
                             await _updateJobStatus(job['id'], {
                               'status': 'CANCELLED',
@@ -994,7 +1439,32 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
 
                     if (status == 'TESTING') ...[
-                      const Text("Factory QC Checklist:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
+                      const Text("Factory QC Inspection & Score:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+
+                      SizedBox(
+                        width: double.infinity,
+                        height: 42,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0284C7),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          icon: const Icon(Icons.fact_check_rounded, color: Colors.white, size: 18),
+                          label: const Text("Evaluate 100-Mark Panel Score", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _openDirector100MarkInspectionSheet(
+                              targetWorker: selectedWorker,
+                              jobNo: job['job_no'],
+                              jobId: job['id'],
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Divider(color: dividerColor),
+
                       CheckboxListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
@@ -1142,11 +1612,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         child: ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
                           icon: const Icon(Icons.restore_rounded, color: Colors.white, size: 16),
-                          label: const Text("Re-Open Order ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
+                          label: const Text("Reopen Order ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
                             await _updateJobStatus(job['id'], {
                               'status': 'RUNNING',
-                              'stage': 'Order Re-opened for production',
+                              'stage': 'Order Reopened for production',
                             });
                             if (ctx.mounted) Navigator.pop(ctx);
                           },
@@ -1331,6 +1801,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             actions: _isSearchOpen
                 ? null
                 : [
+                    // ⭐ DIRECTOR 100-MARK WORKER AUDIT BUTTON
+                    IconButton(
+                      icon: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 22),
+                      tooltip: "Worker Quality Leaderboard",
+                      onPressed: _openWorkerScoresLeaderboard,
+                    ),
                     IconButton(
                       icon: const Icon(Icons.search_rounded, color: Color(0xFF0284C7), size: 22),
                       tooltip: "Search",
@@ -1430,7 +1906,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               )
                             : ListView.builder(
                                 physics: const AlwaysScrollableScrollPhysics(),
-                                // 90px BOTTOM PADDING TAANI FAB KE PEECHE KUCH BHI NA CHUPE!
                                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 90),
                                 itemCount: filteredJobs.length,
                                 itemBuilder: (context, index) {
@@ -1442,8 +1917,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ],
                   ),
           ),
-
-          // PURPLE COLOR FLOATING BUTTON: "+ New Quote"
           floatingActionButton: FloatingActionButton.extended(
             backgroundColor: const Color(0xFF8B5CF6),
             onPressed: () => _openNewQuoteModal(isDark),
@@ -1512,7 +1985,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // --- CRISP INDUSTRIAL CARD: SHOWS BOTH "CREATED BY" & "BUILT BY" ---
   Widget _buildCrispIndustrialCard(Map<String, dynamic> job, bool isDark) {
     final statusStr = (job['status'] ?? '').toString().toUpperCase();
     final String? poNumber = job['po_number'];
@@ -1520,8 +1992,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final String quoteNo = _extractQuoteNo(specsStr);
     final String jobNo = (job['job_no'] ?? '').toString().trim();
     final String scopeOfWork = _extractCleanScope(specsStr);
+    final String scoreBadge = _extractScoreBadge(specsStr);
 
-    // 1. Extract Created By
+    final transferMatch = RegExp(r'\[TRANSFER:FROM:(.*?)\|TO:(.*?)\|REASON:(.*?)\|').firstMatch(specsStr);
+    final bool hasTransferHistory = transferMatch != null;
+
     final byReg = RegExp(r'\[BY:\s*(.*?)\]');
     final byMatch = byReg.firstMatch(specsStr);
     String createdBy = (job['created_by'] ?? '').toString().trim();
@@ -1532,7 +2007,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       createdBy = 'JUNAID';
     }
 
-    // 2. Extract Built By (Kiska Naam Par Ban Raha Hai)
     String assignedBuilder = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
     if (assignedBuilder.isEmpty) {
       final wReg = RegExp(r'\[WORKER:\s*(.*?)\]');
@@ -1604,7 +2078,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. TOP HEADER: JOB NO, QT NO, PO / STATUS
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1666,6 +2139,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             ),
                           ),
                         ),
+                      if (scoreBadge.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF10B981)),
+                          ),
+                          child: Text(
+                            "QC: $scoreBadge",
+                            style: const TextStyle(color: Color(0xFF10B981), fontSize: 9.5, fontWeight: FontWeight.w900),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -1692,7 +2178,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 8),
 
-            // 2. CLIENT & QUOTED PRICE
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1710,7 +2195,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             ),
             const SizedBox(height: 3),
 
-            // 3. ITEM/PANEL DESCRIPTION
             if (rawDesc.isNotEmpty)
               Text(
                 rawDesc,
@@ -1719,7 +2203,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 style: TextStyle(color: isDark ? Colors.white70 : const Color(0xFF334155), fontSize: 11.5, fontWeight: FontWeight.w600),
               ),
 
-            // 4. SCOPE OF WORK
             if (scopeOfWork.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
@@ -1734,9 +2217,32 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
               ),
             ],
 
+            if (hasTransferHistory) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE88226).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: const Color(0xFFE88226).withOpacity(0.5)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.history_toggle_off_rounded, color: Color(0xFFE88226), size: 13),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Text(
+                        "Reassigned: ${transferMatch.group(1)} ➔ ${transferMatch.group(2)} (${transferMatch.group(3)})",
+                        style: const TextStyle(color: Color(0xFFE88226), fontSize: 9.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
             const SizedBox(height: 6),
 
-            // 5. STAGE NAME & PERCENTAGE (5%)
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1759,7 +2265,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
             Divider(color: borderC, height: 1),
             const SizedBox(height: 6),
 
-            // 6. DATES (LEFT) & ACTIONS + "CREATED BY" & "BUILT BY" (RIGHT)
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1816,7 +2321,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ),
                     const SizedBox(height: 4),
 
-                    // 👤 Created by: [NAME]
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1834,7 +2338,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ),
                     const SizedBox(height: 2),
 
-                    // 🔧 Built by: [BUILDER NAME] (Kiske Naam Par Ban Raha Hai)
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -1865,9 +2368,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 }
 
-// =========================================================================
-// PURE QUOTATION FORM SCREEN (WITH BUILDER ASSIGNMENT DROPDOWN)
-// =========================================================================
 class NewQuoteFormScreen extends StatefulWidget {
   final bool isDark;
   final bool isEditMode;
@@ -1951,6 +2451,9 @@ class _NewQuoteFormScreenState extends State<NewQuoteFormScreen> {
           .replaceAll(RegExp(r'\[PO:.*?\]'), '')
           .replaceAll(RegExp(r'\[BY:.*?\]'), '')
           .replaceAll(RegExp(r'\[WORKER:.*?\]'), '')
+          .replaceAll(RegExp(r'\[PREV_WORKER:.*?\]'), '')
+          .replaceAll(RegExp(r'\[TRANSFER:.*?\]'), '')
+          .replaceAll(RegExp(r'\[SCORE:.*?\]'), '')
           .trim();
 
       jobNoCtrl = TextEditingController(text: job['job_no'] ?? '');
@@ -2083,7 +2586,7 @@ class _NewQuoteFormScreenState extends State<NewQuoteFormScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("Assign Builder / Kaun Bana Raha Hai (Optional)", style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.w600)),
+                  Text("Assign Floor Builder / Technician (Optional)", style: TextStyle(color: subTextColor, fontSize: 11, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 3),
                   Container(
                     height: 42,
