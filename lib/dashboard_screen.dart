@@ -54,7 +54,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   Future<void> _fetchWorkers() async {
     try {
       final res = await _supabase.from('workers').select().order('username');
-      if (res.isNotEmpty && mounted) {
+      if (mounted) {
         final list = List<Map<String, dynamic>>.from(res)
             .map((w) => (w['username'] ?? '').toString().trim().toUpperCase())
             .where((w) => w.isNotEmpty)
@@ -153,14 +153,14 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   // =========================================================================
-  // 🔄 RE-ASSIGNMENT MODAL WITH MANDATORY REASON DIALOG
+  // 🔄 RE-ASSIGNMENT MODAL
   // =========================================================================
   Future<void> _handleWorkerReassignment(Map<String, dynamic> job, String newWorker) async {
     final oldWorker = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
     if (oldWorker == newWorker) return;
 
     final reasonCtrl = TextEditingController();
-git status
+
     final bool? confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -196,7 +196,7 @@ git status
                 decoration: InputDecoration(
                   filled: true,
                   fillColor: const Color(0xFF091A26),
-                  hintText: "e.g. Worker on leave, Urgent delivery schedule, Skill required",
+                  hintText: "e.g. Worker on leave, Urgent delivery schedule",
                   hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF193B54))),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -396,21 +396,30 @@ git status
   }
 
   // =========================================================================
-  // ⚙️ 100-MARK ELECTRICAL & AUTOMATION QUALITY INSPECTION SHEET (DIRECTOR)
+  // ⚙️ 100-MARK AUDIT SHEET WITH SLIDE-TO-CONFIRM RIGHT SWIPE
   // =========================================================================
   void _openDirector100MarkInspectionSheet({
     required String targetWorker,
     String? jobNo,
     int? jobId,
+    int? auditMonth,
+    int? auditYear,
+    VoidCallback? onAuditSaved,
   }) {
-    int wiring = 23;      // Max 25
-    int dressing = 18;    // Max 20
-    int ferrule = 14;     // Max 15
-    int plcSignal = 14;   // Max 15
-    int mounting = 14;    // Max 15
-    int safety = 9;       // Max 10
+    final now = DateTime.now();
+    final int month = auditMonth ?? now.month;
+    final int year = auditYear ?? now.year;
 
-    final feedbackCtrl = TextEditingController(text: "Wiring torque and ferrule dressing verified OK.");
+    // Direct 0 se shuru hoga
+    int wiring = 0;
+    int dressing = 0;
+    int attendance = 0;
+    int ferrule = 0;
+    int plcSignal = 0;
+    int mounting = 0;
+    int safety = 0;
+
+    final feedbackCtrl = TextEditingController(text: "");
 
     showModalBottomSheet(
       context: context,
@@ -422,8 +431,8 @@ git status
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final int totalScore = wiring + dressing + ferrule + plcSignal + mounting + safety;
-            final double starRating = (totalScore / 20.0).clamp(1.0, 5.0);
+            final int totalScore = wiring + dressing + attendance + ferrule + plcSignal + mounting + safety;
+            final double starRating = (totalScore / 20.0).clamp(0.0, 5.0);
 
             String qualityTag;
             Color badgeColor;
@@ -433,12 +442,15 @@ git status
             } else if (totalScore >= 80) {
               qualityTag = "FACTORY STANDARD";
               badgeColor = const Color(0xFF38BDF8);
-            } else if (totalScore >= 70) {
+            } else if (totalScore >= 60) {
               qualityTag = "AVERAGE FACTORY OUTPUT";
               badgeColor = const Color(0xFFE88226);
+            } else if (totalScore > 0) {
+              qualityTag = "IN PROGRESS";
+              badgeColor = const Color(0xFFE88226);
             } else {
-              qualityTag = "NEEDS RE-WORK";
-              badgeColor = const Color(0xFFEF4444);
+              qualityTag = "NOT EVALUATED (0/100)";
+              badgeColor = const Color(0xFF64748B);
             }
 
             return Padding(
@@ -449,7 +461,11 @@ git status
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Center(
-                      child: Container(width: 40, height: 4, decoration: BoxDecoration(color: const Color(0xFF244866), borderRadius: BorderRadius.circular(2))),
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(color: const Color(0xFF244866), borderRadius: BorderRadius.circular(2)),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Row(
@@ -462,7 +478,11 @@ git status
                               jobNo != null ? "$jobNo Inspection" : "Worker Quality Audit",
                               style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
                             ),
-                            Text("Builder: $targetWorker", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 2),
+                            Text(
+                              "Builder: $targetWorker • Period: ${_monthName(month)} $year",
+                              style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold),
+                            ),
                           ],
                         ),
                         Container(
@@ -494,12 +514,13 @@ git status
                     ),
                     const Divider(color: Color(0xFF193B54), height: 18),
 
-                    _buildSliderItem("1. Wiring & Crimping Quality (Max 25)", wiring, 25, (v) => setModalState(() => wiring = v)),
+                    _buildSliderItem("1. Wiring & Crimping Quality (Max 20)", wiring, 20, (v) => setModalState(() => wiring = v)),
                     _buildSliderItem("2. Wiring Dressing & Aesthetics (Max 20)", dressing, 20, (v) => setModalState(() => dressing = v)),
-                    _buildSliderItem("3. Ferrule & Tagging Match (Max 15)", ferrule, 15, (v) => setModalState(() => ferrule = v)),
-                    _buildSliderItem("4. PLC & Signal Noise Isolation (Max 15)", plcSignal, 15, (v) => setModalState(() => plcSignal = v)),
-                    _buildSliderItem("5. Component Mounting Alignment (Max 15)", mounting, 15, (v) => setModalState(() => mounting = v)),
-                    _buildSliderItem("6. Safety & QC Factory Check (Max 10)", safety, 10, (v) => setModalState(() => safety = v)),
+                    _buildSliderItem("3. Attendance & Floor Punctuality (Max 20)", attendance, 20, (v) => setModalState(() => attendance = v)),
+                    _buildSliderItem("4. Ferrule & Tagging Match (Max 10)", ferrule, 10, (v) => setModalState(() => ferrule = v)),
+                    _buildSliderItem("5. PLC & Signal Noise Isolation (Max 10)", plcSignal, 10, (v) => setModalState(() => plcSignal = v)),
+                    _buildSliderItem("6. Component Mounting Alignment (Max 10)", mounting, 10, (v) => setModalState(() => mounting = v)),
+                    _buildSliderItem("7. Safety & QC Factory Check (Max 10)", safety, 10, (v) => setModalState(() => safety = v)),
 
                     const SizedBox(height: 10),
                     const Text("Director Quality Review Remark:", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.bold)),
@@ -510,68 +531,78 @@ git status
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: const Color(0xFF0C2030),
-                        hintText: "Enter inspection remarks...",
+                        hintText: "Enter inspection remarks (optional)...",
                         hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFF193B54))),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 18),
 
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF10B981),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                        icon: const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
-                        label: const Text("Save & Publish Quality Score", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                        onPressed: () async {
-                          final scoreTagString = "[SCORE: $totalScore|W:$wiring|D:$dressing|F:$ferrule|P:$plcSignal|M:$mounting|S:$safety]";
+                    // 👉 SLIDE TO PUBLISH SCORE (RIGHT SWIPE BUTTON)
+                    SlideToConfirmButton(
+                      label: "Slide to Publish Score ($totalScore/100) ➔",
+                      onConfirmed: () async {
+                        final scoreTagString = "[SCORE: $totalScore|W:$wiring|D:$dressing|A:$attendance|F:$ferrule|P:$plcSignal|M:$mounting|S:$safety|PERIOD:$month-$year]";
+                        final commentText = feedbackCtrl.text.trim().isNotEmpty
+                            ? feedbackCtrl.text.trim()
+                            : "Audit updated ($totalScore/100) for ${_monthName(month)} $year.";
 
+                        final updatePayload = {
+                          'username': targetWorker,
+                          'rating': starRating,
+                          'rating_tag': qualityTag,
+                          'rating_comment': commentText,
+                          'score_100': totalScore,
+                          'qc_breakdown': scoreTagString,
+                        };
+
+                        // 1. Database Workers table update
+                        try {
+                          final exist = await _supabase.from('workers').select().eq('username', targetWorker).maybeSingle();
+                          if (exist != null) {
+                            await _supabase.from('workers').update(updatePayload).eq('username', targetWorker);
+                          } else {
+                            await _supabase.from('workers').insert(updatePayload);
+                          }
+                        } catch (_) {
                           try {
-                            await _supabase.from('workers').upsert({
-                              'username': targetWorker,
-                              'rating': starRating,
-                              'rating_tag': qualityTag,
-                              'rating_comment': feedbackCtrl.text.trim(),
-                              'score_100': totalScore,
-                              'qc_breakdown': scoreTagString,
-                            });
+                            await _supabase.from('workers').upsert(updatePayload);
                           } catch (_) {}
+                        }
 
-                          if (jobId != null) {
-                            try {
-                              final existing = _jobCards.firstWhere((j) => j['id'] == jobId);
-                              String curSpecs = (existing['specs_detail'] ?? '').toString();
-                              curSpecs = curSpecs.replaceAll(RegExp(r'\[SCORE:.*?\]'), '').trim();
-                              curSpecs = "$curSpecs $scoreTagString";
+                        // 2. Job Card update if linked
+                        if (jobId != null) {
+                          try {
+                            final existing = _jobCards.firstWhere((j) => j['id'] == jobId);
+                            String curSpecs = (existing['specs_detail'] ?? '').toString();
+                            curSpecs = curSpecs.replaceAll(RegExp(r'\[SCORE:.*?\]'), '').trim();
+                            curSpecs = "$curSpecs $scoreTagString";
 
-                              await _supabase.from('job_cards').update({
-                                'status': 'COMPLETED',
-                                'stage': 'QC Passed (Score: $totalScore/100 • $qualityTag)',
-                                'progress': 0.90,
-                                'specs_detail': curSpecs,
-                              }).eq('id', jobId);
-                            } catch (_) {}
-                          }
+                            await _supabase.from('job_cards').update({
+                              'status': 'COMPLETED',
+                              'stage': 'QC Passed (Score: $totalScore/100 • $qualityTag)',
+                              'progress': 0.90,
+                              'specs_detail': curSpecs,
+                            }).eq('id', jobId);
+                          } catch (_) {}
+                        }
 
-                          await _fetchJobCards();
-                          await _fetchWorkers();
+                        // 3. Local refresh & parent refresh
+                        await _fetchWorkers();
+                        await _fetchJobCards();
+                        if (onAuditSaved != null) onAuditSaved();
 
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text("Quality score published for $targetWorker ($totalScore/100 • $qualityTag)"),
-                                backgroundColor: const Color(0xFF10B981),
-                              ),
-                            );
-                          }
-                        },
-                      ),
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text("✓ Published $totalScore/100 for $targetWorker (${_monthName(month)} $year)"),
+                              backgroundColor: const Color(0xFF10B981),
+                            ),
+                          );
+                        }
+                      },
                     ),
                   ],
                 ),
@@ -617,103 +648,343 @@ git status
     );
   }
 
+  // =========================================================================
+  // 🏅 MONTHLY & YEARLY WORKER QUALITY LEADERBOARD (ACCURATE LIVE SCORES)
+  // =========================================================================
   void _openWorkerScoresLeaderboard() {
+    final now = DateTime.now();
+    int selYear = now.year;
+    int selMonth = now.month;
+    bool isYearlyMode = false;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF0C2232),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) {
-        final activeWorkers = _workersFullList.isNotEmpty
-            ? _workersFullList
-            : _availableWorkers.map((w) => {'username': w, 'full_name': w, 'score_100': 85, 'rating': 4.2, 'rating_tag': 'FACTORY STANDARD'}).toList();
+        return StatefulBuilder(
+          builder: (context, setLeaderboardState) {
+            final activeWorkers = _workersFullList.isNotEmpty
+                ? _workersFullList
+                : _availableWorkers.map((w) => {'username': w, 'full_name': w, 'score_100': 0, 'rating': 0.0, 'rating_tag': 'NOT EVALUATED'}).toList();
 
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Text("Worker Quality Scorecard (100 Marks)", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
-                  Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 20),
-                ],
-              ),
-              const SizedBox(height: 12),
-              ...activeWorkers.map((w) {
-                final uName = (w['username'] ?? '').toString();
-                final fName = (w['full_name'] ?? uName).toString();
-                final int score = (w['score_100'] as num?)?.toInt() ?? 85;
-                final double stars = (w['rating'] as num?)?.toDouble() ?? 4.2;
-                final tag = (w['rating_tag'] ?? 'FACTORY STANDARD').toString();
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F2638),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFF1E3E5A)),
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.85,
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0284C7).withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.person_rounded, color: Color(0xFF38BDF8), size: 20),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text("$fName ($uName)", style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 2),
-                            Text("$tag • ${stars.toStringAsFixed(1)} ★", style: const TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w700)),
-                          ],
-                        ),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF10B981).withOpacity(0.18),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: const Color(0xFF10B981)),
-                            ),
-                            child: Text(
-                              "$score / 100",
-                              style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          InkWell(
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              _openDirector100MarkInspectionSheet(targetWorker: uName);
-                            },
-                            child: const Text("Audit Worker ➔", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.bold)),
-                          ),
-                        ],
-                      ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: const [
+                      Text("Worker Quality Scorecard (100 Marks)", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
+                      Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 20),
                     ],
                   ),
-                );
-              }),
-            ],
-          ),
+                  const SizedBox(height: 10),
+
+                  // Mode Switcher (Monthly vs Yearly)
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF071824),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFF193B54)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setLeaderboardState(() => isYearlyMode = false),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: !isYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    "Monthly Audits",
+                                    style: TextStyle(
+                                      color: !isYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setLeaderboardState(() => isYearlyMode = true),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: isYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    "Yearly Overview",
+                                    style: TextStyle(
+                                      color: isYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+
+                        // Date Navigator
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15, color: Color(0xFF38BDF8)),
+                              onPressed: () {
+                                setLeaderboardState(() {
+                                  if (isYearlyMode) {
+                                    selYear--;
+                                  } else {
+                                    if (selMonth == 1) {
+                                      selMonth = 12;
+                                      selYear--;
+                                    } else {
+                                      selMonth--;
+                                    }
+                                  }
+                                });
+                              },
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0C2232),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(isYearlyMode ? Icons.calendar_today_rounded : Icons.calendar_month_rounded, size: 14, color: const Color(0xFFE88226)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    isYearlyMode ? "Full Year $selYear" : "${_monthName(selMonth)} $selYear",
+                                    style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.arrow_forward_ios_rounded, size: 15, color: Color(0xFF38BDF8)),
+                              onPressed: () {
+                                setLeaderboardState(() {
+                                  if (isYearlyMode) {
+                                    selYear++;
+                                  } else {
+                                    if (selMonth == 12) {
+                                      selMonth = 1;
+                                      selYear++;
+                                    } else {
+                                      selMonth++;
+                                    }
+                                  }
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+                  const Divider(color: Color(0xFF193B54), height: 1),
+                  const SizedBox(height: 8),
+
+                  Expanded(
+                    child: ListView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: activeWorkers.length,
+                      itemBuilder: (context, idx) {
+                        final w = activeWorkers[idx];
+                        final uName = (w['username'] ?? '').toString();
+                        final fName = (w['full_name'] ?? uName).toString();
+
+                        // Job cards se period matching
+                        final List<int> periodScores = [];
+                        final targetYearStr = selYear.toString();
+                        final targetMonthStr = _monthName(selMonth).toLowerCase();
+
+                        for (var job in _jobCards) {
+                          final assigned = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
+                          final specs = (job['specs_detail'] ?? '').toString();
+                          final bool isWorkerMatch = (assigned == uName.toUpperCase()) || specs.toUpperCase().contains('[WORKER: ${uName.toUpperCase()}]');
+
+                          if (!isWorkerMatch) continue;
+
+                          final dateStr = (job['target_date'] ?? job['start_date'] ?? '').toString().toLowerCase();
+                          bool matchesPeriod = dateStr.contains(targetYearStr);
+                          if (!isYearlyMode) {
+                            if (!dateStr.contains(targetMonthStr) && !specs.contains('PERIOD:$selMonth-$selYear')) {
+                              matchesPeriod = false;
+                            }
+                          }
+
+                          if (matchesPeriod) {
+                            final scoreBadge = _extractScoreBadge(specs);
+                            if (scoreBadge.isNotEmpty) {
+                              final numVal = int.tryParse(scoreBadge.replaceAll('/100', '').trim());
+                              if (numVal != null) periodScores.add(numVal);
+                            }
+                          }
+                        }
+
+                        // 🔥 DIRECT DATABASE PROFILE SCORE CHECK (FIX FOR 0/100 ISSUE)
+                        final dbScore = (w['score_100'] as num?)?.toInt() ?? 0;
+                        final rawBreakdown = (w['qc_breakdown'] ?? '').toString();
+                        final bool hasPeriodInBreakdown = isYearlyMode
+                            ? rawBreakdown.contains("-$selYear")
+                            : rawBreakdown.contains("PERIOD:$selMonth-$selYear");
+
+                        int displayScore = 0;
+                        String auditCountText = "";
+
+                        if (periodScores.isNotEmpty) {
+                          displayScore = (periodScores.reduce((a, b) => a + b) / periodScores.length).round();
+                          auditCountText = "${periodScores.length} Panel${periodScores.length > 1 ? 's' : ''} Audited in ${isYearlyMode ? '$selYear' : '${_monthName(selMonth)} $selYear'}";
+                        } else if (hasPeriodInBreakdown || dbScore > 0) {
+                          displayScore = dbScore;
+                          auditCountText = "Active Score: $displayScore/100 (${isYearlyMode ? '$selYear' : _monthName(selMonth)})";
+                        } else {
+                          displayScore = 0;
+                          auditCountText = "No audits recorded yet (0/100)";
+                        }
+
+                        final double calculatedRating = displayScore > 0 ? (displayScore / 20.0).clamp(1.0, 5.0) : 0.0;
+                        String calculatedTag;
+                        Color statusBadgeColor;
+                        if (displayScore >= 90) {
+                          calculatedTag = "MASTER BUILDER";
+                          statusBadgeColor = const Color(0xFF10B981);
+                        } else if (displayScore >= 80) {
+                          calculatedTag = "FACTORY STANDARD";
+                          statusBadgeColor = const Color(0xFF38BDF8);
+                        } else if (displayScore >= 60) {
+                          calculatedTag = "AVERAGE FACTORY OUTPUT";
+                          statusBadgeColor = const Color(0xFFE88226);
+                        } else if (displayScore > 0) {
+                          calculatedTag = (w['rating_tag'] ?? "IN PROGRESS").toString();
+                          statusBadgeColor = const Color(0xFF10B981);
+                        } else {
+                          calculatedTag = "NOT EVALUATED (0)";
+                          statusBadgeColor = const Color(0xFF64748B);
+                        }
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0F2638),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFF1E3E5A)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0284C7).withOpacity(0.2),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.person_rounded, color: Color(0xFF38BDF8), size: 20),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text("$fName ($uName)", style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      "$calculatedTag • ${calculatedRating.toStringAsFixed(1)} ★",
+                                      style: TextStyle(color: statusBadgeColor, fontSize: 10, fontWeight: FontWeight.w700),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      auditCountText,
+                                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9.5),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                                    decoration: BoxDecoration(
+                                      color: statusBadgeColor.withOpacity(0.18),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: statusBadgeColor),
+                                    ),
+                                    child: Text(
+                                      "$displayScore / 100",
+                                      style: TextStyle(color: statusBadgeColor, fontSize: 12, fontWeight: FontWeight.w900),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  InkWell(
+                                    onTap: () {
+                                      _openDirector100MarkInspectionSheet(
+                                        targetWorker: uName,
+                                        auditMonth: selMonth,
+                                        auditYear: selYear,
+                                        onAuditSaved: () async {
+                                          await _fetchWorkers();
+                                          setLeaderboardState(() {});
+                                        },
+                                      );
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF0284C7).withOpacity(0.15),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        "Audit (${_monthName(selMonth)}) ➔",
+                                        style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -1079,7 +1350,7 @@ git status
   }
 
   // =========================================================================
-  // WORKFLOW ACTION MODAL: BUILDER RE-ASSIGNMENT ON ALL WORKFLOW STAGES
+  // WORKFLOW ACTION MODAL
   // =========================================================================
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
@@ -1154,7 +1425,6 @@ git status
                     ),
                     const SizedBox(height: 10),
 
-                    // ⭐ UNIVERSAL BUILDER RE-ASSIGNMENT (ACTIVE ACROSS ALL STAGES)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -1772,7 +2042,21 @@ git status
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: Image.asset('assets/images/nextgen_logo_1.jpg', width: 34, height: 34, fit: BoxFit.contain),
+                        child: Image.asset(
+                          'assets/images/nextgen_logo_1.jpg',
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: const Icon(Icons.precision_manufacturing_rounded, color: Color(0xFF1E5BB0), size: 20),
+                          ),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -1780,43 +2064,76 @@ git status
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Row(
-                              children: [
-                                Text("NEXTGEN", style: TextStyle(color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF1E3A5F), fontSize: 14.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-                                const SizedBox(width: 4),
-                                const Text("CONTROLS", style: TextStyle(color: Color(0xFFE88226), fontSize: 12.5, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
-                              ],
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text.rich(
+                                TextSpan(
+                                  children: [
+                                    TextSpan(
+                                      text: "NEXTGEN ",
+                                      style: TextStyle(
+                                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF1E3A5F),
+                                        fontSize: 14.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.8,
+                                      ),
+                                    ),
+                                    const TextSpan(
+                                      text: "CONTROLS",
+                                      style: TextStyle(
+                                        color: Color(0xFFE88226),
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.8,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                maxLines: 1,
+                              ),
                             ),
                             Text(
                               "PRIVATE LIMITED • Simplify Your Industry",
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 7.5, fontWeight: FontWeight.w600),
+                              style: TextStyle(
+                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                fontSize: 7.5,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ],
                         ),
                       ),
+                      const SizedBox(width: 4),
                     ],
                   ),
             actions: _isSearchOpen
                 ? null
                 : [
-                    // ⭐ DIRECTOR 100-MARK WORKER AUDIT BUTTON
                     IconButton(
-                      icon: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 22),
-                      tooltip: "Worker Quality Leaderboard",
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      icon: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 21),
+                      tooltip: "Worker Quality Leaderboard (Monthly/Yearly)",
                       onPressed: _openWorkerScoresLeaderboard,
                     ),
                     IconButton(
-                      icon: const Icon(Icons.search_rounded, color: Color(0xFF0284C7), size: 22),
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      icon: const Icon(Icons.search_rounded, color: Color(0xFF0284C7), size: 21),
                       tooltip: "Search",
                       onPressed: () => setState(() => _isSearchOpen = true),
                     ),
                     IconButton(
-                      icon: Icon(isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: const Color(0xFFE88226), size: 22),
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      icon: Icon(isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: const Color(0xFFE88226), size: 21),
                       tooltip: isDark ? "Switch to Light Mode" : "Switch to Dark Mode",
                       onPressed: () => isDarkModeNotifier.value = !isDark,
                     ),
+                    const SizedBox(width: 4),
                   ],
           ),
           body: RefreshIndicator(
@@ -2364,6 +2681,122 @@ git status
           ],
         ),
       ),
+    );
+  }
+}
+
+// ===========================================================================
+// 👉 SLIDE TO CONFIRM (RIGHT SWIPE) INTERACTIVE WIDGET
+// ===========================================================================
+class SlideToConfirmButton extends StatefulWidget {
+  final String label;
+  final Future<void> Function() onConfirmed;
+
+  const SlideToConfirmButton({
+    super.key,
+    required this.label,
+    required this.onConfirmed,
+  });
+
+  @override
+  State<SlideToConfirmButton> createState() => _SlideToConfirmButtonState();
+}
+
+class _SlideToConfirmButtonState extends State<SlideToConfirmButton> {
+  double _dragValue = 0.0;
+  bool _isFinished = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const double buttonHeight = 48.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double maxWidth = constraints.maxWidth;
+        final double maxDrag = maxWidth - buttonHeight;
+
+        return Container(
+          width: maxWidth,
+          height: buttonHeight,
+          decoration: BoxDecoration(
+            color: const Color(0xFF061824),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5), width: 1.2),
+          ),
+          child: Stack(
+            children: [
+              Container(
+                width: _dragValue + buttonHeight,
+                height: buttonHeight,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF10B981).withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+              Center(
+                child: Text(
+                  _isFinished ? "Publishing Score..." : widget.label,
+                  style: TextStyle(
+                    color: _isFinished ? const Color(0xFF10B981) : Colors.white.withOpacity(0.85),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: _dragValue,
+                child: GestureDetector(
+                  onHorizontalDragUpdate: (details) {
+                    if (_isFinished) return;
+                    setState(() {
+                      _dragValue = (_dragValue + details.delta.dx).clamp(0.0, maxDrag);
+                    });
+                  },
+                  onHorizontalDragEnd: (details) async {
+                    if (_isFinished) return;
+                    if (_dragValue >= maxDrag * 0.80) {
+                      setState(() {
+                        _dragValue = maxDrag;
+                        _isFinished = true;
+                      });
+                      await widget.onConfirmed();
+                    } else {
+                      setState(() {
+                        _dragValue = 0.0;
+                      });
+                    }
+                  },
+                  child: Container(
+                    width: buttonHeight,
+                    height: buttonHeight,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF10B981).withOpacity(0.4),
+                          blurRadius: 8,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: _isFinished
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2),
+                            )
+                          : const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 20),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

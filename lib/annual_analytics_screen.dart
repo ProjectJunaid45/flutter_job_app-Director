@@ -1,7 +1,8 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'custom_drawer.dart';
+import 'custom_drawer.dart' hide isDarkModeNotifier;
+import 'dashboard_screen.dart';
 
 class AnnualAnalyticsScreen extends StatefulWidget {
   final List<Map<String, dynamic>>? initialJobs;
@@ -282,7 +283,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 1. ACCURATE COMMERCIAL AUDIT CARD (OVERFLOW FIXED) ---
+                      // --- 1. COMMERCIAL AUDIT CARD ---
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -567,7 +568,6 @@ class StageItem {
   });
 }
 
-// FULL SOLID PIE CHART PAINTER
 class CleanSolidPiePainter extends CustomPainter {
   final List<StageItem> stages;
   final int total;
