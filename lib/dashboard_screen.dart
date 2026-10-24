@@ -20,8 +20,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   final SupabaseClient _supabase = Supabase.instance.client;
 
   List<Map<String, dynamic>> _jobCards = [];
-  List<String> _availableWorkers = ['MALIK10'];
+  List<String> _availableWorkers = ['MALIK10', 'KING', 'HASHIM'];
   List<Map<String, dynamic>> _workersFullList = [];
+  List<Map<String, dynamic>> _auditHistoryList = [];
   bool _isLoading = true;
   String _currentOperator = 'JUNAID';
 
@@ -31,6 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     _loadCurrentOperator();
     _fetchWorkers();
     _fetchJobCards();
+    _fetchAuditHistory();
   }
 
   @override
@@ -63,8 +65,19 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         setState(() {
           _workersFullList = List<Map<String, dynamic>>.from(res);
           if (list.isNotEmpty) {
-            _availableWorkers = list;
+            _availableWorkers = {..._availableWorkers, ...list}.toList();
           }
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchAuditHistory() async {
+    try {
+      final res = await _supabase.from('worker_audits').select().order('audit_year', ascending: false);
+      if (mounted) {
+        setState(() {
+          _auditHistoryList = List<Map<String, dynamic>>.from(res);
         });
       }
     } catch (_) {}
@@ -396,7 +409,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   // =========================================================================
-  // ⚙️ 100-MARK AUDIT SHEET WITH SLIDE-TO-CONFIRM RIGHT SWIPE
+  // ⚙️ 100-MARK AUDIT SHEET (PERSISTS SCORES & LOADS SAVED MARKS)
   // =========================================================================
   void _openDirector100MarkInspectionSheet({
     required String targetWorker,
@@ -409,30 +422,60 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     final now = DateTime.now();
     final int month = auditMonth ?? now.month;
     final int year = auditYear ?? now.year;
+    final cleanWorker = targetWorker.trim().toUpperCase();
 
-    // Direct 0 se shuru hoga
-    int wiring = 0;
-    int dressing = 0;
-    int attendance = 0;
-    int ferrule = 0;
-    int plcSignal = 0;
-    int mounting = 0;
-    int safety = 0;
+    // 🔍 Existing month audit load karo taaki sheet khulte hi reset (0/100) na ho
+    final existingMonthAudit = _auditHistoryList.firstWhere(
+      (a) =>
+          (a['username'] ?? '').toString().trim().toUpperCase() == cleanWorker &&
+          (a['audit_month'] as num?)?.toInt() == month &&
+          (a['audit_year'] as num?)?.toInt() == year,
+      orElse: () => {},
+    );
 
-    final feedbackCtrl = TextEditingController(text: "");
+    int wiring = 0, dressing = 0, attendance = 0, ferrule = 0, plcSignal = 0, mounting = 0, safety = 0;
+    String rawBreakdown = (existingMonthAudit['qc_breakdown'] ?? '').toString();
+
+    if (rawBreakdown.isEmpty) {
+      final existingWorker = _workersFullList.firstWhere(
+        (w) => (w['username'] ?? '').toString().trim().toUpperCase() == cleanWorker,
+        orElse: () => {},
+      );
+      rawBreakdown = (existingWorker['qc_breakdown'] ?? '').toString();
+    }
+
+    if (rawBreakdown.isNotEmpty) {
+      final wM = RegExp(r'W:(\d+)').firstMatch(rawBreakdown);
+      final dM = RegExp(r'D:(\d+)').firstMatch(rawBreakdown);
+      final aM = RegExp(r'A:(\d+)').firstMatch(rawBreakdown);
+      final fM = RegExp(r'F:(\d+)').firstMatch(rawBreakdown);
+      final pM = RegExp(r'P:(\d+)').firstMatch(rawBreakdown);
+      final mM = RegExp(r'M:(\d+)').firstMatch(rawBreakdown);
+      final sM = RegExp(r'S:(\d+)').firstMatch(rawBreakdown);
+
+      if (wM != null) wiring = int.tryParse(wM.group(1)!) ?? 0;
+      if (dM != null) dressing = int.tryParse(dM.group(1)!) ?? 0;
+      if (aM != null) attendance = int.tryParse(aM.group(1)!) ?? 0;
+      if (fM != null) ferrule = int.tryParse(fM.group(1)!) ?? 0;
+      if (pM != null) plcSignal = int.tryParse(pM.group(1)!) ?? 0;
+      if (mM != null) mounting = int.tryParse(mM.group(1)!) ?? 0;
+      if (sM != null) safety = int.tryParse(sM.group(1)!) ?? 0;
+    }
+
+    final String initialRemark = (existingMonthAudit['rating_comment'] ?? '').toString();
+    final feedbackCtrl = TextEditingController(text: initialRemark);
+    bool isSavingScore = false;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF091722),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final int totalScore = wiring + dressing + attendance + ferrule + plcSignal + mounting + safety;
-            final double starRating = (totalScore / 20.0).clamp(0.0, 5.0);
+            final double autoRating = totalScore > 0 ? (totalScore / 20.0).clamp(1.0, 5.0) : 0.0;
 
             String qualityTag;
             Color badgeColor;
@@ -474,43 +517,46 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              jobNo != null ? "$jobNo Inspection" : "Worker Quality Audit",
-                              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
-                            ),
+                            Text(jobNo != null ? "$jobNo Inspection" : "Worker Quality Audit", style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900)),
                             const SizedBox(height: 2),
-                            Text(
-                              "Builder: $targetWorker • Period: ${_monthName(month)} $year",
-                              style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold),
-                            ),
+                            Text("Builder: $cleanWorker • Audit for: ${_monthName(month)} $year", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold)),
                           ],
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: badgeColor.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: badgeColor),
-                          ),
-                          child: Text(
-                            "$totalScore / 100",
-                            style: TextStyle(color: badgeColor, fontSize: 15, fontWeight: FontWeight.w900),
-                          ),
+                          decoration: BoxDecoration(color: badgeColor.withOpacity(0.18), borderRadius: BorderRadius.circular(8), border: Border.all(color: badgeColor)),
+                          child: Text("$totalScore / 100", style: TextStyle(color: badgeColor, fontSize: 15, fontWeight: FontWeight.w900)),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Text(
-                          "Rating: ${starRating.toStringAsFixed(1)} ★  •  ",
-                          style: const TextStyle(color: Color(0xFFE88226), fontSize: 11.5, fontWeight: FontWeight.w800),
-                        ),
-                        Text(
-                          qualityTag,
-                          style: TextStyle(color: badgeColor, fontSize: 11.5, fontWeight: FontWeight.w900),
-                        ),
-                      ],
+                    const SizedBox(height: 8),
+
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0C2030),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF193B54)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Text("${autoRating.toStringAsFixed(1)} ★", style: const TextStyle(color: Color(0xFFE88226), fontSize: 15, fontWeight: FontWeight.w900)),
+                              const SizedBox(width: 8),
+                              Text(qualityTag, style: TextStyle(color: badgeColor, fontSize: 11, fontWeight: FontWeight.w800)),
+                            ],
+                          ),
+                          Row(
+                            children: List.generate(5, (starIdx) {
+                              final int starNumber = starIdx + 1;
+                              final bool isFilled = starNumber <= autoRating.round();
+                              return Icon(isFilled ? Icons.star_rounded : Icons.star_outline_rounded, size: 20, color: isFilled ? const Color(0xFFE88226) : const Color(0xFF64748B));
+                            }),
+                          ),
+                        ],
+                      ),
                     ),
                     const Divider(color: Color(0xFF193B54), height: 18),
 
@@ -539,70 +585,114 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     ),
                     const SizedBox(height: 18),
 
-                    // 👉 SLIDE TO PUBLISH SCORE (RIGHT SWIPE BUTTON)
-                    SlideToConfirmButton(
-                      label: "Slide to Publish Score ($totalScore/100) ➔",
-                      onConfirmed: () async {
-                        final scoreTagString = "[SCORE: $totalScore|W:$wiring|D:$dressing|A:$attendance|F:$ferrule|P:$plcSignal|M:$mounting|S:$safety|PERIOD:$month-$year]";
-                        final commentText = feedbackCtrl.text.trim().isNotEmpty
-                            ? feedbackCtrl.text.trim()
-                            : "Audit updated ($totalScore/100) for ${_monthName(month)} $year.";
+                    // ✨ CONFIRM & PUBLISH BUTTON WITH CLEAN METHOD INVOCATION
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          elevation: 4,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        onPressed: isSavingScore
+                            ? null
+                            : () async {
+                                setModalState(() => isSavingScore = true);
 
-                        final updatePayload = {
-                          'username': targetWorker,
-                          'rating': starRating,
-                          'rating_tag': qualityTag,
-                          'rating_comment': commentText,
-                          'score_100': totalScore,
-                          'qc_breakdown': scoreTagString,
-                        };
+                                final scoreTagString = "[SCORE: $totalScore|W:$wiring|D:$dressing|A:$attendance|F:$ferrule|P:$plcSignal|M:$mounting|S:$safety|PERIOD:$month-$year]";
+                                final commentText = feedbackCtrl.text.trim().isNotEmpty
+                                    ? feedbackCtrl.text.trim()
+                                    : "Audit published ($totalScore/100 • ${autoRating.toStringAsFixed(1)} ★) for ${_monthName(month)} $year.";
 
-                        // 1. Database Workers table update
-                        try {
-                          final exist = await _supabase.from('workers').select().eq('username', targetWorker).maybeSingle();
-                          if (exist != null) {
-                            await _supabase.from('workers').update(updatePayload).eq('username', targetWorker);
-                          } else {
-                            await _supabase.from('workers').insert(updatePayload);
-                          }
-                        } catch (_) {
-                          try {
-                            await _supabase.from('workers').upsert(updatePayload);
-                          } catch (_) {}
-                        }
+                                final updatePayload = {
+                                  'username': cleanWorker,
+                                  'rating': autoRating,
+                                  'rating_tag': qualityTag,
+                                  'rating_comment': commentText,
+                                  'score_100': totalScore,
+                                  'qc_breakdown': scoreTagString,
+                                };
 
-                        // 2. Job Card update if linked
-                        if (jobId != null) {
-                          try {
-                            final existing = _jobCards.firstWhere((j) => j['id'] == jobId);
-                            String curSpecs = (existing['specs_detail'] ?? '').toString();
-                            curSpecs = curSpecs.replaceAll(RegExp(r'\[SCORE:.*?\]'), '').trim();
-                            curSpecs = "$curSpecs $scoreTagString";
+                                // 1. Save to `workers` table for active snapshot
+                                try {
+                                  final res = await _supabase.from('workers').update(updatePayload).ilike('username', cleanWorker).select();
+                                  if (res.isEmpty) {
+                                    updatePayload['full_name'] = cleanWorker;
+                                    await _supabase.from('workers').insert(updatePayload);
+                                  }
+                                } catch (_) {
+                                  try { await _supabase.from('workers').upsert(updatePayload); } catch (_) {}
+                                }
 
-                            await _supabase.from('job_cards').update({
-                              'status': 'COMPLETED',
-                              'stage': 'QC Passed (Score: $totalScore/100 • $qualityTag)',
-                              'progress': 0.90,
-                              'specs_detail': curSpecs,
-                            }).eq('id', jobId);
-                          } catch (_) {}
-                        }
+                                // 2. Save to `worker_audits` history table for Month & Year tracking
+                                try {
+                                  await _supabase.from('worker_audits').upsert({
+                                    'username': cleanWorker,
+                                    'audit_month': month,
+                                    'audit_year': year,
+                                    'score_100': totalScore,
+                                    'rating': autoRating,
+                                    'rating_tag': qualityTag,
+                                    'rating_comment': commentText,
+                                    'qc_breakdown': scoreTagString,
+                                  }, onConflict: 'username,audit_month,audit_year');
+                                } catch (_) {}
 
-                        // 3. Local refresh & parent refresh
-                        await _fetchWorkers();
-                        await _fetchJobCards();
-                        if (onAuditSaved != null) onAuditSaved();
+                                // 3. Update job card if linked
+                                if (jobId != null) {
+                                  try {
+                                    final existingJob = _jobCards.firstWhere((j) => j['id'] == jobId);
+                                    String curSpecs = (existingJob['specs_detail'] ?? '').toString();
+                                    curSpecs = curSpecs.replaceAll(RegExp(r'\[SCORE:.*?\]'), '').trim();
+                                    curSpecs = "$curSpecs $scoreTagString";
 
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text("✓ Published $totalScore/100 for $targetWorker (${_monthName(month)} $year)"),
-                              backgroundColor: const Color(0xFF10B981),
-                            ),
-                          );
-                        }
-                      },
+                                    await _supabase.from('job_cards').update({
+                                      'status': 'COMPLETED',
+                                      'stage': 'QC Passed (Score: $totalScore/100 • ${autoRating.toStringAsFixed(1)} ★)',
+                                      'progress': 0.90,
+                                      'specs_detail': curSpecs,
+                                    }).eq('id', jobId);
+                                  } catch (_) {}
+                                }
+
+                                await _fetchWorkers();
+                                await _fetchAuditHistory();
+                                await _fetchJobCards();
+                                if (onAuditSaved != null) onAuditSaved();
+
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text("✓ Saved ${_monthName(month)} $year Audit: $totalScore/100 for $cleanWorker!"),
+                                      backgroundColor: const Color(0xFF10B981),
+                                      duration: const Duration(seconds: 3),
+                                    ),
+                                  );
+                                }
+                              },
+                        child: isSavingScore
+                            ? Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    "Saving ${_monthName(month)} $year Audit...",
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                "Confirm & Publish (${_monthName(month)} $year • $totalScore/100)",
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 13),
+                              ),
+                      ),
                     ),
                   ],
                 ),
@@ -621,9 +711,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Expanded(
-              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w600)),
-            ),
+            Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontWeight: FontWeight.w600))),
             Text("$val / $max", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w900)),
           ],
         ),
@@ -649,7 +737,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 
   // =========================================================================
-  // 🏅 MONTHLY & YEARLY WORKER QUALITY LEADERBOARD (ACCURATE LIVE SCORES)
+  // 🏅 LEADERBOARD MODAL (DYNAMIC MONTHLY & YEARLY HISTORY ARCHIVE)
   // =========================================================================
   void _openWorkerScoresLeaderboard() {
     final now = DateTime.now();
@@ -665,9 +753,26 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setLeaderboardState) {
-            final activeWorkers = _workersFullList.isNotEmpty
-                ? _workersFullList
-                : _availableWorkers.map((w) => {'username': w, 'full_name': w, 'score_100': 0, 'rating': 0.0, 'rating_tag': 'NOT EVALUATED'}).toList();
+            final Set<String> allWorkerNames = {};
+            for (var w in _workersFullList) {
+              final un = (w['username'] ?? '').toString().trim().toUpperCase();
+              if (un.isNotEmpty) allWorkerNames.add(un);
+            }
+            for (var w in _availableWorkers) {
+              if (w.trim().isNotEmpty) allWorkerNames.add(w.trim().toUpperCase());
+            }
+            for (var j in _jobCards) {
+              final asgn = (j['assigned_to'] ?? '').toString().trim().toUpperCase();
+              if (asgn.isNotEmpty) allWorkerNames.add(asgn);
+            }
+
+            final List<Map<String, dynamic>> combinedWorkerList = allWorkerNames.map((uname) {
+              final existing = _workersFullList.firstWhere(
+                (w) => (w['username'] ?? '').toString().trim().toUpperCase() == uname,
+                orElse: () => {'username': uname, 'full_name': uname, 'score_100': 0, 'rating': 0.0, 'rating_tag': 'NOT EVALUATED'},
+              );
+              return Map<String, dynamic>.from(existing);
+            }).toList();
 
             return Container(
               height: MediaQuery.of(context).size.height * 0.85,
@@ -748,7 +853,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                         const SizedBox(height: 8),
 
-                        // Date Navigator
+                        // Date Navigator (< Month / Year >)
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -819,63 +924,60 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Expanded(
                     child: ListView.builder(
                       physics: const BouncingScrollPhysics(),
-                      itemCount: activeWorkers.length,
+                      itemCount: combinedWorkerList.length,
                       itemBuilder: (context, idx) {
-                        final w = activeWorkers[idx];
-                        final uName = (w['username'] ?? '').toString();
+                        final w = combinedWorkerList[idx];
+                        final uName = (w['username'] ?? '').toString().trim().toUpperCase();
                         final fName = (w['full_name'] ?? uName).toString();
-
-                        // Job cards se period matching
-                        final List<int> periodScores = [];
-                        final targetYearStr = selYear.toString();
-                        final targetMonthStr = _monthName(selMonth).toLowerCase();
-
-                        for (var job in _jobCards) {
-                          final assigned = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
-                          final specs = (job['specs_detail'] ?? '').toString();
-                          final bool isWorkerMatch = (assigned == uName.toUpperCase()) || specs.toUpperCase().contains('[WORKER: ${uName.toUpperCase()}]');
-
-                          if (!isWorkerMatch) continue;
-
-                          final dateStr = (job['target_date'] ?? job['start_date'] ?? '').toString().toLowerCase();
-                          bool matchesPeriod = dateStr.contains(targetYearStr);
-                          if (!isYearlyMode) {
-                            if (!dateStr.contains(targetMonthStr) && !specs.contains('PERIOD:$selMonth-$selYear')) {
-                              matchesPeriod = false;
-                            }
-                          }
-
-                          if (matchesPeriod) {
-                            final scoreBadge = _extractScoreBadge(specs);
-                            if (scoreBadge.isNotEmpty) {
-                              final numVal = int.tryParse(scoreBadge.replaceAll('/100', '').trim());
-                              if (numVal != null) periodScores.add(numVal);
-                            }
-                          }
-                        }
-
-                        // 🔥 DIRECT DATABASE PROFILE SCORE CHECK (FIX FOR 0/100 ISSUE)
-                        final dbScore = (w['score_100'] as num?)?.toInt() ?? 0;
-                        final rawBreakdown = (w['qc_breakdown'] ?? '').toString();
-                        final bool hasPeriodInBreakdown = isYearlyMode
-                            ? rawBreakdown.contains("-$selYear")
-                            : rawBreakdown.contains("PERIOD:$selMonth-$selYear");
 
                         int displayScore = 0;
                         String auditCountText = "";
 
-                        if (periodScores.isNotEmpty) {
-                          displayScore = (periodScores.reduce((a, b) => a + b) / periodScores.length).round();
-                          auditCountText = "${periodScores.length} Panel${periodScores.length > 1 ? 's' : ''} Audited in ${isYearlyMode ? '$selYear' : '${_monthName(selMonth)} $selYear'}";
-                        } else if (hasPeriodInBreakdown || dbScore > 0) {
-                          displayScore = dbScore;
-                          auditCountText = "Active Score: $displayScore/100 (${isYearlyMode ? '$selYear' : _monthName(selMonth)})";
+                        if (isYearlyMode) {
+                          // FULL YEAR ARCHIVE OVERVIEW
+                          final yearAudits = _auditHistoryList.where((a) {
+                            final matchU = (a['username'] ?? '').toString().trim().toUpperCase() == uName;
+                            final matchY = (a['audit_year'] as num?)?.toInt() == selYear;
+                            return matchU && matchY;
+                          }).toList();
+
+                          if (yearAudits.isNotEmpty) {
+                            final total = yearAudits.map((a) => (a['score_100'] as num?)?.toInt() ?? 0).reduce((a, b) => a + b);
+                            displayScore = (total / yearAudits.length).round();
+                            auditCountText = "${yearAudits.length} Month${yearAudits.length > 1 ? 's' : ''} Audited in $selYear (Avg: $displayScore/100)";
+                          } else {
+                            displayScore = 0;
+                            auditCountText = "No audits recorded in $selYear (0/100)";
+                          }
                         } else {
-                          displayScore = 0;
-                          auditCountText = "No audits recorded yet (0/100)";
+                          // MONTHLY SPECIFIC ARCHIVE (e.g., September, October)
+                          final monthRecord = _auditHistoryList.firstWhere(
+                            (a) =>
+                                (a['username'] ?? '').toString().trim().toUpperCase() == uName &&
+                                (a['audit_month'] as num?)?.toInt() == selMonth &&
+                                (a['audit_year'] as num?)?.toInt() == selYear,
+                            orElse: () => {},
+                          );
+
+                          if (monthRecord.isNotEmpty) {
+                            displayScore = (monthRecord['score_100'] as num?)?.toInt() ?? 0;
+                            auditCountText = "Audited in ${_monthName(selMonth)} $selYear ($displayScore/100)";
+                          } else {
+                            final bool isCurrentMonth = (selMonth == now.month && selYear == now.year);
+                            final dbScore = (w['score_100'] as num?)?.toInt() ?? 0;
+
+                            if (isCurrentMonth && dbScore > 0) {
+                              displayScore = dbScore;
+                              auditCountText = "Active Score: $displayScore/100 (${_monthName(selMonth)})";
+                            } else {
+                              displayScore = 0;
+                              auditCountText = "No audit recorded for ${_monthName(selMonth)} $selYear (0/100)";
+                            }
+                          }
                         }
 
                         final double calculatedRating = displayScore > 0 ? (displayScore / 20.0).clamp(1.0, 5.0) : 0.0;
+
                         String calculatedTag;
                         Color statusBadgeColor;
                         if (displayScore >= 90) {
@@ -888,7 +990,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           calculatedTag = "AVERAGE FACTORY OUTPUT";
                           statusBadgeColor = const Color(0xFFE88226);
                         } else if (displayScore > 0) {
-                          calculatedTag = (w['rating_tag'] ?? "IN PROGRESS").toString();
+                          calculatedTag = "IN PROGRESS";
                           statusBadgeColor = const Color(0xFF10B981);
                         } else {
                           calculatedTag = "NOT EVALUATED (0)";
@@ -957,6 +1059,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                         auditYear: selYear,
                                         onAuditSaved: () async {
                                           await _fetchWorkers();
+                                          await _fetchAuditHistory();
+                                          await _fetchJobCards();
                                           setLeaderboardState(() {});
                                         },
                                       );
@@ -990,6 +1094,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
+  // =========================================================================
+  // 📊 FULL 12-MONTH VALUE & PIPELINE GRAPH MODAL
+  // =========================================================================
   void _openMonthlyGraphModal(String categoryLabel, Color themeColor, bool isDark) {
     final now = DateTime.now();
     int selectedMonthIndex = now.month - 1;
@@ -1003,27 +1110,16 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
       final po = (j['po_number'] ?? '').toString().trim();
       final specs = (j['specs_detail'] ?? '').toString();
 
-      if (upperCat == 'ALL') {
-        return true;
-      } else if (upperCat == "PO REC'D" || upperCat == "PO" || upperCat == "PO_RECEIVED") {
-        return po.isNotEmpty || specs.contains("PO:");
-      } else if (upperCat == 'QUOTE' || upperCat == 'QUOTATION') {
-        return true;
-      } else if (upperCat == 'RUNNING') {
-        return st == 'RUNNING' || st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
-      } else if (upperCat == 'TESTING') {
-        return st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
-      } else if (upperCat == 'READY' || upperCat == 'COMPLETED') {
-        return st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
-      } else if (upperCat == 'BILLING') {
-        return st == 'BILLING' || st == 'DISPATCHED';
-      } else if (upperCat == 'DISPATCH' || upperCat == 'DISPATCHED') {
-        return st == 'DISPATCHED';
-      } else if (upperCat == 'PENDING') {
-        return st == 'PENDING';
-      } else if (upperCat == 'CANCEL' || upperCat == 'CANCELLED') {
-        return st == 'CANCELLED';
-      }
+      if (upperCat == 'ALL') return true;
+      if (upperCat == "PO REC'D" || upperCat == "PO" || upperCat == "PO_RECEIVED") return po.isNotEmpty || specs.contains("PO:");
+      if (upperCat == 'QUOTE' || upperCat == 'QUOTATION') return true;
+      if (upperCat == 'RUNNING') return st == 'RUNNING' || st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+      if (upperCat == 'TESTING') return st == 'TESTING' || st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+      if (upperCat == 'READY' || upperCat == 'COMPLETED') return st == 'COMPLETED' || st == 'BILLING' || st == 'DISPATCHED';
+      if (upperCat == 'BILLING') return st == 'BILLING' || st == 'DISPATCHED';
+      if (upperCat == 'DISPATCH' || upperCat == 'DISPATCHED') return st == 'DISPATCHED';
+      if (upperCat == 'PENDING') return st == 'PENDING';
+      if (upperCat == 'CANCEL' || upperCat == 'CANCELLED') return st == 'CANCELLED';
       return st == upperCat;
     }).toList();
 
@@ -1042,7 +1138,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
         return StatefulBuilder(
           builder: (context, setSheetState) {
             final String filterYearStr = selectedYear.toString();
-
             List<int> monthlyCounts = List.filled(12, 0);
             for (var job in categoryJobs) {
               final sDate = (job['start_date'] ?? job['target_date'] ?? '').toString();
@@ -1085,39 +1180,23 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         children: [
                           Container(width: 10, height: 10, decoration: BoxDecoration(color: themeColor, shape: BoxShape.circle)),
                           const SizedBox(width: 8),
-                          Text(
-                            "$categoryLabel Pipeline",
-                            style: TextStyle(color: primaryText, fontSize: 14, fontWeight: FontWeight.w900),
-                          ),
+                          Text("$categoryLabel Pipeline", style: TextStyle(color: primaryText, fontSize: 14, fontWeight: FontWeight.w900)),
                         ],
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: containerBg,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: borderClr),
-                        ),
+                        decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(20), border: Border.all(color: borderClr)),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             InkWell(
                               onTap: () => setSheetState(() => selectedYear--),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Icon(Icons.arrow_left_rounded, size: 18, color: themeColor),
-                              ),
+                              child: Padding(padding: const EdgeInsets.all(4.0), child: Icon(Icons.arrow_left_rounded, size: 18, color: themeColor)),
                             ),
-                            Text(
-                              "$selectedYear",
-                              style: TextStyle(color: primaryText, fontSize: 12, fontWeight: FontWeight.w900),
-                            ),
+                            Text("$selectedYear", style: TextStyle(color: primaryText, fontSize: 12, fontWeight: FontWeight.w900)),
                             InkWell(
                               onTap: () => setSheetState(() => selectedYear++),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Icon(Icons.arrow_right_rounded, size: 18, color: themeColor),
-                              ),
+                              child: Padding(padding: const EdgeInsets.all(4.0), child: Icon(Icons.arrow_right_rounded, size: 18, color: themeColor)),
                             ),
                           ],
                         ),
@@ -1136,11 +1215,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Container(
                     height: 175,
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: containerBg,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: borderClr),
-                    ),
+                    decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(14), border: Border.all(color: borderClr)),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -1157,18 +1232,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                             children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
-                                decoration: isSelected
-                                    ? BoxDecoration(
-                                        color: isDark ? Colors.white : const Color(0xFF0F172A),
-                                        borderRadius: BorderRadius.circular(4),
-                                      )
-                                    : null,
+                                decoration: isSelected ? BoxDecoration(color: isDark ? Colors.white : const Color(0xFF0F172A), borderRadius: BorderRadius.circular(4)) : null,
                                 child: Text(
                                   "$count",
                                   style: TextStyle(
-                                    color: isSelected
-                                        ? (isDark ? const Color(0xFF0F172A) : Colors.white)
-                                        : (count > 0 ? themeColor : (isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8))),
+                                    color: isSelected ? (isDark ? const Color(0xFF0F172A) : Colors.white) : (count > 0 ? themeColor : (isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8))),
                                     fontSize: 9.5,
                                     fontWeight: FontWeight.w900,
                                   ),
@@ -1182,29 +1250,11 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                 decoration: BoxDecoration(
                                   color: isSelected ? Colors.white : themeColor.withOpacity(0.85),
                                   borderRadius: BorderRadius.circular(5),
-                                  border: isSelected
-                                      ? Border.all(color: isDark ? Colors.white : const Color(0xFF0F172A), width: 1.5)
-                                      : null,
-                                  boxShadow: isSelected
-                                      ? [
-                                          BoxShadow(
-                                            color: (isDark ? Colors.white : themeColor).withOpacity(0.4),
-                                            blurRadius: 5,
-                                            spreadRadius: 1,
-                                          ),
-                                        ]
-                                      : null,
+                                  border: isSelected ? Border.all(color: isDark ? Colors.white : const Color(0xFF0F172A), width: 1.5) : null,
                                 ),
                               ),
                               const SizedBox(height: 6),
-                              Text(
-                                months[index],
-                                style: TextStyle(
-                                  color: isSelected ? (isDark ? const Color(0xFF38BDF8) : themeColor) : secondaryText,
-                                  fontSize: 9,
-                                  fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold,
-                                ),
-                              ),
+                              Text(months[index], style: TextStyle(color: isSelected ? (isDark ? const Color(0xFF38BDF8) : themeColor) : secondaryText, fontSize: 9, fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold)),
                             ],
                           ),
                         );
@@ -1215,22 +1265,12 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: themeColor.withOpacity(0.4)),
-                    ),
+                    decoration: BoxDecoration(color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8), border: Border.all(color: themeColor.withOpacity(0.4))),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          "$selMonthName $selectedYear: ${selJobs.length} Processed",
-                          style: TextStyle(color: themeColor, fontSize: 12, fontWeight: FontWeight.w900),
-                        ),
-                        Text(
-                          "Value: ₹${(selMonthValuation / 100000).toStringAsFixed(2)} Lakhs",
-                          style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900),
-                        ),
+                        Text("$selMonthName $selectedYear: ${selJobs.length} Processed", style: TextStyle(color: themeColor, fontSize: 12, fontWeight: FontWeight.w900)),
+                        Text("Value: ₹${(selMonthValuation / 100000).toStringAsFixed(2)} Lakhs", style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900)),
                       ],
                     ),
                   ),
@@ -1239,9 +1279,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   const SizedBox(height: 6),
                   Expanded(
                     child: selJobs.isEmpty
-                        ? Center(
-                            child: Text("No pipeline orders for $selMonthName $selectedYear", style: TextStyle(color: secondaryText, fontSize: 11.5, fontWeight: FontWeight.w600)),
-                          )
+                        ? Center(child: Text("No pipeline orders for $selMonthName $selectedYear", style: TextStyle(color: secondaryText, fontSize: 11.5, fontWeight: FontWeight.w600)))
                         : ListView.separated(
                             physics: const BouncingScrollPhysics(),
                             itemCount: selJobs.length,
@@ -1254,11 +1292,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
                               return Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: isDark ? const Color(0xFF0C2232) : Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: borderClr),
-                                ),
+                                decoration: BoxDecoration(color: isDark ? const Color(0xFF0C2232) : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: borderClr)),
                                 child: Row(
                                   children: [
                                     Expanded(
@@ -1279,58 +1313,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                                             ],
                                           ),
                                           const SizedBox(height: 2),
-                                          Text(
-                                            item['client'] ?? '',
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(color: primaryText, fontSize: 12, fontWeight: FontWeight.w700),
-                                          ),
-                                          Text(
-                                            itemPanel,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(color: secondaryText, fontSize: 9.5),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text("Start: ${item['start_date'] ?? '-'}", style: TextStyle(color: secondaryText, fontSize: 8.5)),
-                                              Row(
-                                                children: [
-                                                  InkWell(
-                                                    onTap: () => _openEditQuoteModal(item, isDark, ctx),
-                                                    child: Container(
-                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                      decoration: BoxDecoration(color: const Color(0xFF0284C7).withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
-                                                      child: const Row(
-                                                        children: [
-                                                          Icon(Icons.edit, size: 10, color: Color(0xFF0284C7)),
-                                                          SizedBox(width: 2),
-                                                          Text("Edit", style: TextStyle(color: Color(0xFF0284C7), fontSize: 9, fontWeight: FontWeight.bold)),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  const SizedBox(width: 8),
-                                                  InkWell(
-                                                    onTap: () => _deleteJob(item['id'], ctx),
-                                                    child: Container(
-                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                      decoration: BoxDecoration(color: Colors.red.withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
-                                                      child: const Row(
-                                                        children: [
-                                                          Icon(Icons.delete_outline, size: 10, color: Colors.red),
-                                                          SizedBox(width: 2),
-                                                          Text("Delete", style: TextStyle(color: Colors.red, fontSize: 9, fontWeight: FontWeight.bold)),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
+                                          Text(item['client'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: primaryText, fontSize: 12, fontWeight: FontWeight.w700)),
+                                          Text(itemPanel, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: secondaryText, fontSize: 9.5)),
                                         ],
                                       ),
                                     ),
@@ -1349,9 +1333,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
     );
   }
 
-  // =========================================================================
-  // WORKFLOW ACTION MODAL
-  // =========================================================================
   void _openStatusActionModal(Map<String, dynamic> job, bool isDark) {
     final status = (job['status'] ?? '').toString().toUpperCase();
     final reasonCtrl = TextEditingController(text: job['pending_reason'] ?? '');
@@ -1359,14 +1340,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
     final rawQuotationPrice = (job['quotation_amount'] ?? '').toString().replaceAll(',', '').trim();
     final rawInvoicePrice = (job['invoice_amount'] ?? '').toString().replaceAll(',', '').trim();
-    final poAmtCtrl = TextEditingController(
-      text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice,
-    );
-
+    final poAmtCtrl = TextEditingController(text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice);
     final invoiceNoCtrl = TextEditingController(text: job['invoice_no'] ?? 'INV-');
-    final invoiceAmtCtrl = TextEditingController(
-      text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice,
-    );
+    final invoiceAmtCtrl = TextEditingController(text: rawInvoicePrice.isNotEmpty ? rawInvoicePrice : rawQuotationPrice);
     final vehicleCtrl = TextEditingController(text: job['dispatch_vehicle'] ?? '');
 
     String currentAssigned = (job['assigned_to'] ?? '').toString().trim().toUpperCase();
@@ -1398,9 +1374,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 children: [
                   const Icon(Icons.hub_rounded, color: Color(0xFF0284C7), size: 18),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text("${job['job_no']} Workflow & Builder", style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold)),
-                  ),
+                  Expanded(child: Text("${job['job_no']} Workflow & Builder", style: TextStyle(color: textColor, fontSize: 14, fontWeight: FontWeight.bold))),
                 ],
               ),
               content: SingleChildScrollView(
@@ -1410,11 +1384,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1)),
-                      ),
+                      decoration: BoxDecoration(color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(6), border: Border.all(color: isDark ? const Color(0xFF1E3E5A) : const Color(0xFFCBD5E1))),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -1436,11 +1406,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                     Container(
                       height: 40,
                       padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: fieldBg,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
-                      ),
+                      decoration: BoxDecoration(color: fieldBg, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5))),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
                           value: _availableWorkers.contains(selectedWorker) ? selectedWorker : null,
@@ -1449,10 +1415,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           isExpanded: true,
                           icon: const Icon(Icons.swap_horiz_rounded, color: Color(0xFFE88226), size: 20),
                           items: _availableWorkers.map((w) {
-                            return DropdownMenuItem<String>(
-                              value: w,
-                              child: Text("Builder: $w", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
-                            );
+                            return DropdownMenuItem<String>(value: w, child: Text("Builder: $w", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)));
                           }).toList(),
                           onChanged: (val) async {
                             if (val != null && val != selectedWorker) {
@@ -1497,7 +1460,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                         ),
                       ),
                       const SizedBox(height: 12),
-
                       SizedBox(
                         width: double.infinity,
                         height: 40,
@@ -1506,13 +1468,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           icon: const Icon(Icons.verified_rounded, color: Colors.white, size: 16),
                           label: const Text("Verify PO & Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
-                            if (poNumberCtrl.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text("PO Number is required!"), backgroundColor: Colors.red),
-                              );
-                              return;
-                            }
-
+                            if (poNumberCtrl.text.trim().isEmpty) return;
                             final Map<String, dynamic> upFields = {
                               'status': 'RUNNING',
                               'stage': 'Fabrication & Layout Stage',
@@ -1520,36 +1476,8 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                               'assigned_to': selectedWorker,
                               'progress': 0.25,
                             };
-                            if (poAmtCtrl.text.trim().isNotEmpty) {
-                              upFields['invoice_amount'] = poAmtCtrl.text.trim();
-                            }
-
-                            String curSpecs = (job['specs_detail'] ?? '').toString();
-                            curSpecs = curSpecs.replaceAll(RegExp(r'\[WORKER:.*?\]'), '').trim();
-                            curSpecs = "$curSpecs [WORKER: $selectedWorker]";
-                            upFields['specs_detail'] = curSpecs;
-
+                            if (poAmtCtrl.text.trim().isNotEmpty) upFields['invoice_amount'] = poAmtCtrl.text.trim();
                             await _updateJobStatus(job['id'], upFields);
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 34,
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
-                          ),
-                          icon: const Icon(Icons.cancel_outlined, size: 15),
-                          label: const Text("Cancel Quotation", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-                          onPressed: () async {
-                            await _updateJobStatus(job['id'], {
-                              'status': 'CANCELLED',
-                              'stage': 'Quotation Rejected / Cancelled',
-                            });
                             if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
@@ -1586,161 +1514,29 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           },
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Divider(color: dividerColor),
-                      TextField(
-                        controller: reasonCtrl,
-                        style: TextStyle(color: textColor, fontSize: 11.5),
-                        decoration: InputDecoration(
-                          hintText: "Reason for hold or cancellation",
-                          hintStyle: TextStyle(color: subTextColor, fontSize: 10.5),
-                          filled: true,
-                          fillColor: fieldBg,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 34,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFB45309)),
-                                icon: const Icon(Icons.pause_circle_outline_rounded, color: Colors.white, size: 15),
-                                label: const Text("Hold (Pending)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10.5)),
-                                onPressed: () async {
-                                  final r = reasonCtrl.text.trim();
-                                  await _updateJobStatus(job['id'], {
-                                    'status': 'PENDING',
-                                    'stage': r.isNotEmpty ? 'On Hold: $r' : 'On Hold (Pending)',
-                                    'pending_reason': r,
-                                  });
-                                  if (ctx.mounted) Navigator.pop(ctx);
-                                },
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: SizedBox(
-                              height: 34,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-                                icon: const Icon(Icons.cancel_outlined, color: Colors.white, size: 15),
-                                label: const Text("Cancel Order", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10.5)),
-                                onPressed: () async {
-                                  final r = reasonCtrl.text.trim();
-                                  await _updateJobStatus(job['id'], {
-                                    'status': 'CANCELLED',
-                                    'stage': r.isNotEmpty ? 'Cancelled: $r' : 'Order Cancelled',
-                                    'pending_reason': r,
-                                  });
-                                  if (ctx.mounted) Navigator.pop(ctx);
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-
-                    if (status == 'PENDING') ...[
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFD97706).withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFFD97706).withOpacity(0.4)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.info_outline, size: 16, color: Color(0xFFD97706)),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                job['pending_reason'] != null && job['pending_reason'].toString().isNotEmpty
-                                    ? "Reason: ${job['pending_reason']}"
-                                    : "Job is currently on hold. Resume work or cancel this order.",
-                                style: const TextStyle(color: Color(0xFFD97706), fontSize: 11, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text("Pending Decision Action:", style: TextStyle(color: textColor, fontSize: 11.5, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 38,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
-                          icon: const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 17),
-                          label: const Text("Resume Work ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
-                          onPressed: () async {
-                            await _updateJobStatus(job['id'], {
-                              'status': 'RUNNING',
-                              'stage': 'Work Resumed (Active Production)',
-                              'pending_reason': null,
-                            });
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 38,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444)),
-                          icon: const Icon(Icons.cancel_rounded, color: Colors.white, size: 17),
-                          label: const Text("Cancel Order", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
-                          onPressed: () async {
-                            await _updateJobStatus(job['id'], {
-                              'status': 'CANCELLED',
-                              'stage': 'Order Cancelled from Pending',
-                            });
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                        ),
-                      ),
                     ],
 
                     if (status == 'TESTING') ...[
-                      const Text("Factory QC Inspection & Score:", style: TextStyle(color: Color(0xFF0284C7), fontSize: 12, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-
                       SizedBox(
                         width: double.infinity,
                         height: 42,
                         child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF0284C7),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                           icon: const Icon(Icons.fact_check_rounded, color: Colors.white, size: 18),
                           label: const Text("Evaluate 100-Mark Panel Score", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
                           onPressed: () {
                             Navigator.pop(ctx);
-                            _openDirector100MarkInspectionSheet(
-                              targetWorker: selectedWorker,
-                              jobNo: job['job_no'],
-                              jobId: job['id'],
-                            );
+                            _openDirector100MarkInspectionSheet(targetWorker: selectedWorker, jobNo: job['job_no'], jobId: job['id']);
                           },
                         ),
                       ),
                       const SizedBox(height: 10),
                       Divider(color: dividerColor),
-
                       CheckboxListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         activeColor: const Color(0xFF10B981),
                         title: Text("Electrical Wiring Drawing & Schematic OK", style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w700)),
-                        subtitle: Text("Busbar size, wire tags, terminal numbers matched", style: TextStyle(color: subTextColor, fontSize: 9.5)),
                         value: drawingOk,
                         onChanged: (v) => setDialogState(() => drawingOk = v ?? false),
                       ),
@@ -1778,31 +1574,10 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           label: const Text("QC Passed ➔ Mark COMPLETED", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: (drawingOk && hvTestOk && plcLogicOk && dressingOk)
                               ? () async {
-                                  await _updateJobStatus(job['id'], {
-                                    'status': 'COMPLETED',
-                                    'stage': 'Drawing & QC Passed, Ready for Billing',
-                                    'progress': 0.90,
-                                  });
+                                  await _updateJobStatus(job['id'], {'status': 'COMPLETED', 'stage': 'Drawing & QC Passed, Ready for Billing', 'progress': 0.90});
                                   if (ctx.mounted) Navigator.pop(ctx);
                                 }
                               : null,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 32,
-                        child: TextButton.icon(
-                          style: TextButton.styleFrom(foregroundColor: Colors.red),
-                          icon: const Icon(Icons.cancel_outlined, size: 15),
-                          label: const Text("Cancel Order from Testing", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                          onPressed: () async {
-                            await _updateJobStatus(job['id'], {
-                              'status': 'CANCELLED',
-                              'stage': 'Cancelled during testing',
-                            });
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
                         ),
                       ),
                     ],
@@ -1811,41 +1586,20 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                       TextField(
                         controller: invoiceNoCtrl,
                         style: TextStyle(color: textColor, fontSize: 11.5),
-                        decoration: InputDecoration(
-                          labelText: "GST Invoice Number",
-                          labelStyle: TextStyle(color: subTextColor, fontSize: 10.5),
-                          filled: true,
-                          fillColor: fieldBg,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
+                        decoration: InputDecoration(labelText: "GST Invoice Number", filled: true, fillColor: fieldBg, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none)),
                       ),
                       const SizedBox(height: 6),
                       TextField(
                         controller: invoiceAmtCtrl,
                         keyboardType: TextInputType.number,
                         style: TextStyle(color: textColor, fontSize: 11.5),
-                        decoration: InputDecoration(
-                          labelText: "Final Invoice Amount (₹)",
-                          labelStyle: TextStyle(color: subTextColor, fontSize: 10.5),
-                          filled: true,
-                          fillColor: fieldBg,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
+                        decoration: InputDecoration(labelText: "Final Invoice Amount (₹)", filled: true, fillColor: fieldBg, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none)),
                       ),
                       const SizedBox(height: 6),
                       TextField(
                         controller: vehicleCtrl,
                         style: TextStyle(color: textColor, fontSize: 11.5),
-                        decoration: InputDecoration(
-                          labelText: "Vehicle No / Gate Pass",
-                          labelStyle: TextStyle(color: subTextColor, fontSize: 10.5),
-                          filled: true,
-                          fillColor: fieldBg,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        ),
+                        decoration: InputDecoration(labelText: "Vehicle No / Gate Pass", filled: true, fillColor: fieldBg, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none)),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
@@ -1873,8 +1627,6 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
 
                     if (status == 'CANCELLED') ...[
                       const Text("Order Status: CANCELLED", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 6),
-                      Text("This order has been cancelled. To resume, reopen the order below:", style: TextStyle(color: subTextColor, fontSize: 11)),
                       const SizedBox(height: 10),
                       SizedBox(
                         width: double.infinity,
@@ -1884,10 +1636,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                           icon: const Icon(Icons.restore_rounded, color: Colors.white, size: 16),
                           label: const Text("Reopen Order ➔ Move to RUNNING", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11.5)),
                           onPressed: () async {
-                            await _updateJobStatus(job['id'], {
-                              'status': 'RUNNING',
-                              'stage': 'Order Reopened for production',
-                            });
+                            await _updateJobStatus(job['id'], {'status': 'RUNNING', 'stage': 'Order Reopened for production'});
                             if (ctx.mounted) Navigator.pop(ctx);
                           },
                         ),
@@ -1897,10 +1646,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: Text("Close", style: TextStyle(color: subTextColor, fontSize: 12)),
-                ),
+                TextButton(onPressed: () => Navigator.pop(ctx), child: Text("Close", style: TextStyle(color: subTextColor, fontSize: 12))),
               ],
             );
           },
@@ -1930,13 +1676,7 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
           const SnackBar(content: Text("Pipeline status updated!"), backgroundColor: Color(0xFF10B981)),
         );
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Update error: $e"), backgroundColor: Colors.red),
-        );
-      }
-    }
+    } catch (_) {}
   }
 
   @override
@@ -2007,133 +1747,64 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
                 ? Container(
                     height: 38,
                     margin: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
-                    ),
+                    decoration: BoxDecoration(color: isDark ? const Color(0xFF0F2638) : const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(20)),
                     child: TextField(
                       controller: _searchCtrl,
                       autofocus: true,
                       onChanged: (val) => setState(() => _searchQuery = val.trim().toLowerCase()),
                       style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 13),
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.search_rounded, size: 17, color: Color(0xFF0284C7)),
-                        suffixIcon: IconButton(
-                          padding: EdgeInsets.zero,
-                          icon: const Icon(Icons.close_rounded, size: 16, color: Colors.grey),
-                          onPressed: () {
-                            setState(() {
-                              _searchCtrl.clear();
-                              _searchQuery = '';
-                              _isSearchOpen = false;
-                            });
-                          },
-                        ),
-                        hintText: "Search Job #, PO #, Scope of Work...",
-                        hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 9),
-                      ),
+                      decoration: const InputDecoration(prefixIcon: Icon(Icons.search_rounded, size: 17, color: Color(0xFF0284C7)), border: InputBorder.none),
                     ),
                   )
                 : Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(6),
                         child: Image.asset(
                           'assets/images/nextgen_logo_1.jpg',
-                          width: 32,
-                          height: 32,
+                          width: 28,
+                          height: 28,
                           fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: const Icon(Icons.precision_manufacturing_rounded, color: Color(0xFF1E5BB0), size: 20),
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.precision_manufacturing_rounded,
+                            color: Color(0xFF1E5BB0),
+                            size: 20,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FittedBox(
-                              fit: BoxFit.scaleDown,
-                              alignment: Alignment.centerLeft,
-                              child: Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: "NEXTGEN ",
-                                      style: TextStyle(
-                                        color: isDark ? const Color(0xFF38BDF8) : const Color(0xFF1E3A5F),
-                                        fontSize: 14.5,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.8,
-                                      ),
-                                    ),
-                                    const TextSpan(
-                                      text: "CONTROLS",
-                                      style: TextStyle(
-                                        color: Color(0xFFE88226),
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 0.8,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                maxLines: 1,
-                              ),
-                            ),
-                            Text(
-                              "PRIVATE LIMITED • Simplify Your Industry",
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                                fontSize: 7.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
+                      const Flexible(
+                        child: Text(
+                          "NEXTGEN CONTROLS",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Color(0xFF38BDF8),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 4),
                     ],
                   ),
             actions: _isSearchOpen
                 ? null
                 : [
                     IconButton(
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
                       icon: const Icon(Icons.workspace_premium_rounded, color: Color(0xFFE88226), size: 21),
                       tooltip: "Worker Quality Leaderboard (Monthly/Yearly)",
                       onPressed: _openWorkerScoresLeaderboard,
                     ),
                     IconButton(
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
                       icon: const Icon(Icons.search_rounded, color: Color(0xFF0284C7), size: 21),
-                      tooltip: "Search",
                       onPressed: () => setState(() => _isSearchOpen = true),
                     ),
                     IconButton(
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
                       icon: Icon(isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded, color: const Color(0xFFE88226), size: 21),
-                      tooltip: isDark ? "Switch to Light Mode" : "Switch to Dark Mode",
                       onPressed: () => isDarkModeNotifier.value = !isDark,
                     ),
-                    const SizedBox(width: 4),
                   ],
           ),
           body: RefreshIndicator(
@@ -2685,122 +2356,9 @@ class _DashboardScreenState extends State<DashboardScreen> with SingleTickerProv
   }
 }
 
-// ===========================================================================
-// 👉 SLIDE TO CONFIRM (RIGHT SWIPE) INTERACTIVE WIDGET
-// ===========================================================================
-class SlideToConfirmButton extends StatefulWidget {
-  final String label;
-  final Future<void> Function() onConfirmed;
-
-  const SlideToConfirmButton({
-    super.key,
-    required this.label,
-    required this.onConfirmed,
-  });
-
-  @override
-  State<SlideToConfirmButton> createState() => _SlideToConfirmButtonState();
-}
-
-class _SlideToConfirmButtonState extends State<SlideToConfirmButton> {
-  double _dragValue = 0.0;
-  bool _isFinished = false;
-
-  @override
-  Widget build(BuildContext context) {
-    const double buttonHeight = 48.0;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final double maxWidth = constraints.maxWidth;
-        final double maxDrag = maxWidth - buttonHeight;
-
-        return Container(
-          width: maxWidth,
-          height: buttonHeight,
-          decoration: BoxDecoration(
-            color: const Color(0xFF061824),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: const Color(0xFF10B981).withOpacity(0.5), width: 1.2),
-          ),
-          child: Stack(
-            children: [
-              Container(
-                width: _dragValue + buttonHeight,
-                height: buttonHeight,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withOpacity(0.25),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-              ),
-              Center(
-                child: Text(
-                  _isFinished ? "Publishing Score..." : widget.label,
-                  style: TextStyle(
-                    color: _isFinished ? const Color(0xFF10B981) : Colors.white.withOpacity(0.85),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ),
-              Positioned(
-                left: _dragValue,
-                child: GestureDetector(
-                  onHorizontalDragUpdate: (details) {
-                    if (_isFinished) return;
-                    setState(() {
-                      _dragValue = (_dragValue + details.delta.dx).clamp(0.0, maxDrag);
-                    });
-                  },
-                  onHorizontalDragEnd: (details) async {
-                    if (_isFinished) return;
-                    if (_dragValue >= maxDrag * 0.80) {
-                      setState(() {
-                        _dragValue = maxDrag;
-                        _isFinished = true;
-                      });
-                      await widget.onConfirmed();
-                    } else {
-                      setState(() {
-                        _dragValue = 0.0;
-                      });
-                    }
-                  },
-                  child: Container(
-                    width: buttonHeight,
-                    height: buttonHeight,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF10B981),
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF10B981).withOpacity(0.4),
-                          blurRadius: 8,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: _isFinished
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.2),
-                            )
-                          : const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 20),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
+// =========================================================================
+// 📝 FULL COMPREHENSIVE NEW & EDIT QUOTE FORM SCREEN
+// =========================================================================
 class NewQuoteFormScreen extends StatefulWidget {
   final bool isDark;
   final bool isEditMode;
