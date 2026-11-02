@@ -5,7 +5,7 @@ import 'custom_drawer.dart' hide isDarkModeNotifier;
 import 'dashboard_screen.dart';
 
 class AnnualAnalyticsScreen extends StatefulWidget {
-  final List<Map<String, dynamic>>? initialJobs;
+  final dynamic initialJobs;
 
   const AnnualAnalyticsScreen({super.key, this.initialJobs});
 
@@ -16,7 +16,7 @@ class AnnualAnalyticsScreen extends StatefulWidget {
 class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
   final SupabaseClient _supabase = Supabase.instance.client;
   bool _isLoading = false;
-  List<Map<String, dynamic>> _allJobs = [];
+  List _allJobs = [];
   String _selectedYear = '2026';
 
   final List<String> _trackedYears = ['2024', '2025', '2026', '2027'];
@@ -24,8 +24,8 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialJobs != null && widget.initialJobs!.isNotEmpty) {
-      _allJobs = List<Map<String, dynamic>>.from(widget.initialJobs!);
+    if (widget.initialJobs != null && (widget.initialJobs as List).isNotEmpty) {
+      _allJobs = List.from(widget.initialJobs as Iterable);
       _isLoading = false;
     } else {
       _isLoading = true;
@@ -38,7 +38,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
       final data = await _supabase.from('job_cards').select().order('id', ascending: false);
       if (mounted) {
         setState(() {
-          _allJobs = List<Map<String, dynamic>>.from(data);
+          _allJobs = List.from(data);
           _isLoading = false;
         });
       }
@@ -52,7 +52,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
     }
   }
 
-  bool _matchesYear(Map<String, dynamic> job, String year) {
+  bool _matchesYear(dynamic job, String year) {
     final start = (job['start_date'] ?? '').toString();
     final created = (job['created_at'] ?? '').toString();
     final target = (job['target_date'] ?? '').toString();
@@ -92,7 +92,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
         final Color textSub = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
 
         // Filter Jobs for Selected Year
-        final List<Map<String, dynamic>> targetJobs = _allJobs.where((j) => _matchesYear(j, _selectedYear)).toList();
+        final List targetJobs = _allJobs.where((j) => _matchesYear(j, _selectedYear)).toList();
         final int totalCount = targetJobs.length;
 
         // --- LIFECYCLE COUNTS ---
@@ -111,7 +111,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
           return st == 'RUNNING';
         }).length;
 
-        // PENDING / ON HOLD STAGE
         final int countPending = targetJobs.where((j) {
           final st = (j['status'] ?? '').toString().toUpperCase();
           return st == 'PENDING';
@@ -123,9 +122,11 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
           return po.isNotEmpty || specs.contains("PO:");
         }).length;
 
+        // Total 2 quotes generated matching Pipeline
         final int totalQuotesInitiated = targetJobs.where((j) {
           final q = (j['quotation_amount'] ?? '').toString().trim();
-          return q.isNotEmpty && q != '0';
+          final st = (j['status'] ?? '').toString().toUpperCase();
+          return (q.isNotEmpty && q != '0') || st == 'QUOTATION' || st == 'QUOTE';
         }).length;
 
         final int countOpenQuotes = targetJobs.where((j) {
@@ -133,7 +134,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
           final po = (j['po_number'] ?? '').toString().trim();
           final specs = (j['specs_detail'] ?? '').toString();
           final hasPo = po.isNotEmpty || specs.contains("PO:");
-          return st == 'QUOTATION' || (!hasPo && st != 'CANCELLED' && st != 'PENDING');
+          return (st == 'QUOTATION' || st == 'QUOTE') && !hasPo;
         }).length;
 
         final int countCancelled = targetJobs.where((j) {
@@ -141,13 +142,12 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
           return st == 'CANCELLED';
         }).length;
 
-        // ALL STAGES WITH EXACT MATCHING DASHBOARD COLORS
         final List<StageItem> stages = [
           StageItem(
             name: "Quotes",
             tag: "QUOTES",
-            subtext: "Total $totalQuotesInitiated quotes generated ($countOpenQuotes pending PO)",
-            count: countOpenQuotes > 0 ? countOpenQuotes : (totalQuotesInitiated > 0 ? totalQuotesInitiated : 0),
+            subtext: "Total $totalQuotesInitiated quotes generated (${countOpenQuotes > 0 ? countOpenQuotes : 0} pending PO)",
+            count: totalQuotesInitiated > 0 ? totalQuotesInitiated : countOpenQuotes,
             color: const Color(0xFF8B5CF6),
           ),
           StageItem(
@@ -199,7 +199,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
           );
         }
 
-        // --- FINANCIAL AUDIT CALCULATION ---
         double yearlyTotalQuoted = 0.0;
         double yearlyTotalPO = 0.0;
 
@@ -250,7 +249,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     physics: const BouncingScrollPhysics(),
                     children: [
-                      // Year Selection Buttons
                       Row(
                         children: _trackedYears.map((yr) {
                           final isSelected = yr == _selectedYear;
@@ -283,7 +281,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 1. COMMERCIAL AUDIT CARD ---
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
@@ -351,7 +348,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 2. SOLID PIE CHART CARD ---
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(16),
@@ -371,7 +367,7 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                                   style: TextStyle(color: textMain, fontSize: 14, fontWeight: FontWeight.w900),
                                 ),
                                 Text(
-                                  "Total: $totalCount (FY $_selectedYear)",
+                                  "Total: ${pieTotal > 0 ? pieTotal : totalCount} (FY $_selectedYear)",
                                   style: const TextStyle(color: Color(0xFFE88226), fontSize: 12, fontWeight: FontWeight.w900),
                                 ),
                               ],
@@ -398,7 +394,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
                       ),
                       const SizedBox(height: 14),
 
-                      // --- 3. STAGES BREAKDOWN CARDS ---
                       ...stages.map((stage) {
                         final int baseTotal = pieTotal > 0 ? pieTotal : (totalCount > 0 ? totalCount : 1);
                         final double pct = (stage.count / baseTotal) * 100;
@@ -467,7 +462,6 @@ class _AnnualAnalyticsScreenState extends State<AnnualAnalyticsScreen> {
 
                       const SizedBox(height: 4),
 
-                      // --- 4. KEY INSIGHTS BOTTOM CARD ---
                       Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
