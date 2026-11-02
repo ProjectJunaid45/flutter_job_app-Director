@@ -42,6 +42,91 @@ class _CustomDrawerState extends State<CustomDrawer> {
     } catch (_) {}
   }
 
+  // --- CONFIRMATION POPUP BEFORE LOGOUT ---
+  Future<void> _confirmAndLogout(BuildContext context, bool isDark) async {
+    final bool? shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) {
+        final Color dialogBg = isDark ? const Color(0xFF0C2232) : Colors.white;
+        final Color textColor = isDark ? Colors.white : const Color(0xFF0F172A);
+        final Color subTextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+        return AlertDialog(
+          backgroundColor: dialogBg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(
+              color: isDark ? const Color(0xFF1E3A52) : const Color(0xFFE2E8F0),
+            ),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEF4444).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.logout_rounded, color: Color(0xFFEF4444), size: 20),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                "Sign Out Confirmation",
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          content: Text(
+            "Are you sure you want to end your current session and return to the login screen?",
+            style: TextStyle(
+              color: subTextColor,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: Text(
+                "Cancel",
+                style: TextStyle(
+                  color: subTextColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text(
+                "Yes, Sign Out",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldLogout == true && context.mounted) {
+      await _handleLogout(context);
+    }
+  }
+
   Future<void> _handleLogout(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
@@ -226,7 +311,44 @@ class _CustomDrawerState extends State<CustomDrawer> {
     return (m >= 1 && m <= 12) ? months[m - 1] : 'Jan';
   }
 
-  // --- DOWNLOAD & SHARE LOGIC ---
+  // --- WINDOWS NATIVE "SAVE AS" FILE DIALOG ---
+  Future<String?> _showWindowsSaveDialog(String defaultFileName, String ext) async {
+    try {
+      final filter = ext == 'pdf'
+          ? 'PDF Document (*.pdf)|*.pdf|All Files (*.*)|*.*'
+          : 'CSV Spreadsheet (*.csv)|*.csv|All Files (*.*)|*.*';
+
+      final escapedFilter = filter.replaceAll("'", "''");
+      final escapedFileName = defaultFileName.replaceAll("'", "''");
+
+      final script = '''
+[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null
+\$dlg = New-Object System.Windows.Forms.SaveFileDialog
+\$dlg.Filter = '$escapedFilter'
+\$dlg.FileName = '$escapedFileName'
+\$dlg.Title = 'Save As'
+if (\$dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write(\$dlg.FileName)
+} else {
+  [Console]::Out.Write('__USER_CANCELLED__')
+}
+''';
+
+      final result = await Process.run('powershell', ['-NoProfile', '-Command', script]);
+      if (result.exitCode == 0) {
+        final path = result.stdout.toString().trim();
+        if (path == '__USER_CANCELLED__') {
+          return '__CANCELLED__';
+        }
+        if (path.isNotEmpty) {
+          return path;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // --- DOWNLOAD & SHARE LOGIC (WINDOWS + MOBILE SAFE) ---
   Future<void> _handleStatementAction(
     ScaffoldMessengerState messenger,
     DateTime fromDate,
@@ -235,14 +357,16 @@ class _CustomDrawerState extends State<CustomDrawer> {
     bool isShare,
   ) async {
     final String typeName = isPdf ? "PDF" : "Excel";
+    final String ext = isPdf ? "pdf" : "csv";
     final String dateSlug = "${fromDate.day}_${fromDate.month}_to_${toDate.day}_${toDate.month}_${toDate.year}";
-    final String fileName = "NextGen_Statement_$dateSlug.${isPdf ? 'pdf' : 'csv'}";
+    final String fileName = "NextGen_Statement_$dateSlug.$ext";
 
+    // 1. Loading Notification
     messenger.clearSnackBars();
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          "Downloading $typeName Statement...",
+          "Preparing $typeName Statement...",
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
         ),
         backgroundColor: const Color(0xFF0284C7),
@@ -271,37 +395,88 @@ class _CustomDrawerState extends State<CustomDrawer> {
         fileBytes = utf8.encode(csvContent);
       }
 
+      // Cache file in temporary directory
       final tempDir = await getTemporaryDirectory();
       final tempFile = File('${tempDir.path}/$fileName');
       await tempFile.writeAsBytes(fileBytes as List<int>, flush: true);
 
-      final displayPath = "/storage/emulated/0/Download/$fileName";
-
-      try {
-        final downloadDir = Directory('/storage/emulated/0/Download');
-        if (await downloadDir.exists()) {
-          final targetFile = File('${downloadDir.path}/$fileName');
-          await targetFile.writeAsBytes(fileBytes as List<int>, flush: true);
-        }
-      } catch (_) {}
-
-      messenger.clearSnackBars();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            "$typeName saved to: $displayPath",
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.white),
-          ),
-          backgroundColor: const Color(0xFF10B981),
-          duration: const Duration(seconds: 4),
-        ),
-      );
-
+      // --- SHARE FLOW ---
       if (isShare) {
         final xFile = XFile(tempFile.path, mimeType: isPdf ? 'application/pdf' : 'text/csv');
         await Share.shareXFiles(
           [xFile],
           text: "Nextgen Controls - Statement of Operations (${fromDate.day}/${fromDate.month}/${fromDate.year} to ${toDate.day}/${toDate.month}/${toDate.year})",
+        );
+        return;
+      }
+
+      // --- DOWNLOAD FLOW ---
+      if (Platform.isWindows) {
+        // Laptop/Windows: Native "Save As" popup opens
+        final chosenPath = await _showWindowsSaveDialog(fileName, ext);
+
+        if (chosenPath == '__CANCELLED__') {
+          messenger.clearSnackBars();
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text("Download cancelled.", style: TextStyle(color: Colors.white)),
+              backgroundColor: Color(0xFF64748B),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return;
+        }
+
+        String savedLocation;
+        if (chosenPath != null && chosenPath.isNotEmpty) {
+          final targetFile = File(chosenPath);
+          await targetFile.writeAsBytes(fileBytes as List<int>, flush: true);
+          savedLocation = chosenPath;
+        } else {
+          // Fallback to user's Windows Downloads directory
+          final userProfile = Platform.environment['USERPROFILE'] ?? '';
+          final winDownloads = Directory('$userProfile\\Downloads');
+          if (await winDownloads.exists()) {
+            final targetFile = File('${winDownloads.path}\\$fileName');
+            await targetFile.writeAsBytes(fileBytes as List<int>, flush: true);
+            savedLocation = targetFile.path;
+          } else {
+            savedLocation = tempFile.path;
+          }
+        }
+
+        messenger.clearSnackBars();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              "$typeName saved to: $savedLocation",
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        // Mobile (Android / iOS): Unchanged original download behavior
+        final displayPath = "/storage/emulated/0/Download/$fileName";
+        try {
+          final downloadDir = Directory('/storage/emulated/0/Download');
+          if (await downloadDir.exists()) {
+            final targetFile = File('${downloadDir.path}/$fileName');
+            await targetFile.writeAsBytes(fileBytes as List<int>, flush: true);
+          }
+        } catch (_) {}
+
+        messenger.clearSnackBars();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              "$typeName saved to: $displayPath",
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFF10B981),
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     } catch (e) {
@@ -823,11 +998,15 @@ class _CustomDrawerState extends State<CustomDrawer> {
                             _openStatementBottomSheet(context, isDark);
                           },
                         ),
-                        const SizedBox(height: 350),
+                      ],
+                    ),
+                  ),
 
-                  // 4. LOCK & SIGN OUT BUTTON
+                  const SizedBox(height: 10),
+
+                  // 4. LOCK & SIGN OUT BUTTON PINNED AT BOTTOM WITH CONFIRMATION
                   GestureDetector(
-                    onTap: () => _handleLogout(context),
+                    onTap: () => _confirmAndLogout(context, isDark),
                     child: Container(
                       width: double.infinity,
                       height: 42,
@@ -874,10 +1053,7 @@ class _CustomDrawerState extends State<CustomDrawer> {
                 ],
               ),
             ),
-              ],
-              ),
           ),
-          )
         );
       },
     );

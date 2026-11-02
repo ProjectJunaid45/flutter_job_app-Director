@@ -37,7 +37,402 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
     final bool isDesktop = screenWidth > 700;
+
+    Widget content = Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: isDesktop ? 24.0 : 14.0,
+        vertical: isDesktop ? 16.0 : 8.0,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 1. BRAND LOGO
+          Container(
+            width: isDesktop ? 64 : 58,
+            height: isDesktop ? 64 : 58,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFF67B0D8), width: 1.8),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF67B0D8).withOpacity(0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/nextgen_logo_1.jpg',
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Center(
+                    child: Icon(
+                      Icons.settings_suggest_rounded,
+                      size: 28,
+                      color: Color(0xFFE88226),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 5),
+
+          // 2. BRAND TITLE & OFFICIAL GEAR "C⚙️NTR⚙️LS"
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "NEXTGEN",
+                style: TextStyle(
+                  color: const Color(0xFF38BDF8),
+                  fontSize: isDesktop ? 20 : 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2.0,
+                  height: 1.05,
+                ),
+              ),
+              const SizedBox(height: 1),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    "C",
+                    style: TextStyle(
+                      color: const Color(0xFFE88226),
+                      fontSize: isDesktop ? 17 : 15.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(width: 1),
+                  Icon(
+                    Icons.settings,
+                    size: isDesktop ? 15 : 14,
+                    color: const Color(0xFFE88226),
+                  ),
+                  const SizedBox(width: 1),
+                  Text(
+                    "NTR",
+                    style: TextStyle(
+                      color: const Color(0xFFE88226),
+                      fontSize: isDesktop ? 17 : 15.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(width: 1),
+                  Icon(
+                    Icons.settings,
+                    size: isDesktop ? 15 : 14,
+                    color: const Color(0xFFE88226),
+                  ),
+                  const SizedBox(width: 1),
+                  Text(
+                    "LS",
+                    style: TextStyle(
+                      color: const Color(0xFFE88226),
+                      fontSize: isDesktop ? 17 : 15.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                "PRIVATE LIMITED • SIMPLIFY YOUR INDUSTRY",
+                style: TextStyle(
+                  color: const Color(0xFF67B0D8),
+                  fontSize: isDesktop ? 9.5 : 8.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.9,
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: isDesktop ? 14 : 8),
+
+          // 3. 3x2 BALANCED GRID
+          if (isDesktop)
+            GridView.count(
+              shrinkWrap: true,
+              crossAxisCount: 2,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 14,
+              mainAxisSpacing: 12,
+              childAspectRatio: 3.4,
+              children: [
+                _buildLargeMatrixCard(
+                  icon: Icons.electrical_services_rounded,
+                  tag: "PANEL",
+                  title: "Control Panels",
+                  desc: "PLC Panels, VFD, APFC, MCC & PCC manufacturing.",
+                  color: const Color(0xFFE88226),
+                  isDesktop: isDesktop,
+                ),
+                _buildLargeMatrixCard(
+                  icon: Icons.speed_rounded,
+                  tag: "DRIVES",
+                  title: "AC & DC Drives",
+                  desc: "VFD drives setup, motor tuning & syncing.",
+                  color: const Color(0xFFF59E0B),
+                  isDesktop: isDesktop,
+                ),
+                _buildLargeMatrixCard(
+                  icon: Icons.phone_android_rounded,
+                  tag: "MOBILE",
+                  title: "Mobile Telemetry",
+                  desc: "Live PLC telemetry, alerts & mobile control.",
+                  color: const Color(0xFF38BDF8),
+                  isDesktop: isDesktop,
+                ),
+                _buildLargeMatrixCard(
+                  icon: Icons.laptop_chromebook_rounded,
+                  tag: "SOFTWARE",
+                  title: "Industrial Software",
+                  desc: "Dashboard, Alarms, Logging & reports.",
+                  color: const Color(0xFFA855F7),
+                  isDesktop: isDesktop,
+                ),
+                _buildLargeMatrixCard(
+                  icon: Icons.memory_rounded,
+                  tag: "AUTOMATION",
+                  title: "PLC Retrofitting",
+                  desc: "Machine logic modernizing & programming.",
+                  color: const Color(0xFF00E676),
+                  isDesktop: isDesktop,
+                ),
+                _buildLargeMatrixCard(
+                  icon: Icons.build_circle_outlined,
+                  tag: "SERVICE",
+                  title: "AMC Maintenance",
+                  desc: "Breakdown repair & monthly contracts.",
+                  color: const Color(0xFFF43F5E),
+                  isDesktop: isDesktop,
+                ),
+              ],
+            )
+          else
+            Expanded(
+              child: GridView.count(
+                crossAxisCount: 2,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisSpacing: 9,
+                mainAxisSpacing: 9,
+                childAspectRatio: 1.40,
+                children: [
+                  _buildLargeMatrixCard(
+                    icon: Icons.electrical_services_rounded,
+                    tag: "PANEL",
+                    title: "Control Panels",
+                    desc: "PLC Panels, VFD, APFC, MCC & PCC manufacturing.",
+                    color: const Color(0xFFE88226),
+                    isDesktop: isDesktop,
+                  ),
+                  _buildLargeMatrixCard(
+                    icon: Icons.speed_rounded,
+                    tag: "DRIVES",
+                    title: "AC & DC Drives",
+                    desc: "VFD drives setup, motor tuning & syncing.",
+                    color: const Color(0xFFF59E0B),
+                    isDesktop: isDesktop,
+                  ),
+                  _buildLargeMatrixCard(
+                    icon: Icons.phone_android_rounded,
+                    tag: "MOBILE",
+                    title: "Mobile Telemetry",
+                    desc: "Live PLC telemetry, alerts & mobile control.",
+                    color: const Color(0xFF38BDF8),
+                    isDesktop: isDesktop,
+                  ),
+                  _buildLargeMatrixCard(
+                    icon: Icons.laptop_chromebook_rounded,
+                    tag: "SOFTWARE",
+                    title: "Industrial Software",
+                    desc: "Dashboard, Alarms, Logging & reports.",
+                    color: const Color(0xFFA855F7),
+                    isDesktop: isDesktop,
+                  ),
+                  _buildLargeMatrixCard(
+                    icon: Icons.memory_rounded,
+                    tag: "AUTOMATION",
+                    title: "PLC Retrofitting",
+                    desc: "Machine logic modernizing & programming.",
+                    color: const Color(0xFF00E676),
+                    isDesktop: isDesktop,
+                  ),
+                  _buildLargeMatrixCard(
+                    icon: Icons.build_circle_outlined,
+                    tag: "SERVICE",
+                    title: "AMC Maintenance",
+                    desc: "Breakdown repair & monthly contracts.",
+                    color: const Color(0xFFF43F5E),
+                    isDesktop: isDesktop,
+                  ),
+                ],
+              ),
+            ),
+
+          SizedBox(height: isDesktop ? 12 : 8),
+
+          // 4. GOV BADGES
+          Row(
+            children: [
+              Expanded(
+                child: _buildGovBadge(
+                  label: "GSTIN",
+                  val: "27BUZPS8168M1Z4",
+                  icon: Icons.verified_user_rounded,
+                  isDesktop: isDesktop,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildGovBadge(
+                  label: "UDYAM",
+                  val: "MH-33-0454689",
+                  icon: Icons.domain_verification_rounded,
+                  isDesktop: isDesktop,
+                ),
+              ),
+            ],
+          ),
+
+          SizedBox(height: isDesktop ? 10 : 7),
+
+          // 5. CONTACT CONTAINER
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.symmetric(horizontal: isDesktop ? 14 : 10, vertical: isDesktop ? 9 : 7),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B1C2A),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF1A3B54)),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.mail_outline_rounded, size: 12.5, color: Color(0xFFE88226)),
+                    const SizedBox(width: 6),
+                    Text(
+                      "nextgencontrols@gmail.com",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: isDesktop ? 12 : 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                const Divider(color: Color(0xFF16324A), height: 1),
+                const SizedBox(height: 5),
+
+                if (isDesktop)
+                  Row(
+                    children: [
+                      Expanded(child: _buildPhoneChip("+91 9892485539")),
+                      const SizedBox(width: 6),
+                      Expanded(child: _buildPhoneChip("+91 9921379012")),
+                      const SizedBox(width: 6),
+                      Expanded(child: _buildPhoneChip("+91 9987369614")),
+                      const SizedBox(width: 6),
+                      Expanded(child: _buildPhoneChip("+91 9767013933")),
+                    ],
+                  )
+                else ...[
+                  Row(
+                    children: [
+                      Expanded(child: _buildPhoneChip("+91 9892485539")),
+                      const SizedBox(width: 6),
+                      Expanded(child: _buildPhoneChip("+91 9921379012")),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Row(
+                    children: [
+                      Expanded(child: _buildPhoneChip("+91 9987369614")),
+                      const SizedBox(width: 6),
+                      Expanded(child: _buildPhoneChip("+91 9767013933")),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          SizedBox(height: isDesktop ? 12 : 8),
+
+          // 6. CONTINUE BUTTON
+          Container(
+            width: double.infinity,
+            height: isDesktop ? 48 : 44,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: const LinearGradient(
+                colors: [Color(0xFFF7941D), Color(0xFFE88226)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFE88226).withOpacity(0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SignInScreen(),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    "Continue to Sign In",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: isDesktop ? 15.5 : 14.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Colors.white,
+                    size: isDesktop ? 18 : 17,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+        ],
+      ),
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFF07121A),
@@ -57,333 +452,19 @@ class WelcomeScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: isDesktop ? 24.0 : 14.0,
-              vertical: isDesktop ? 12.0 : 8.0,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 1. BRAND LOGO
-                Container(
-                  width: 58,
-                  height: 58,
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFF67B0D8), width: 1.8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF67B0D8).withOpacity(0.3),
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+          child: isDesktop
+              ? Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 880),
+                    child: (screenHeight < 740)
+                        ? SingleChildScrollView(
+                            physics: const BouncingScrollPhysics(),
+                            child: content,
+                          )
+                        : content,
                   ),
-                  child: ClipOval(
-                    child: Image.asset(
-                      'assets/images/nextgen_logo_1.jpg',
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const Center(
-                          child: Icon(
-                            Icons.settings_suggest_rounded,
-                            size: 28,
-                            color: Color(0xFFE88226),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 5),
-
-                // 2. BRAND TITLE & OFFICIAL GEAR "C⚙️NTR⚙️LS"
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      "NEXTGEN",
-                      style: TextStyle(
-                        color: Color(0xFF38BDF8),
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2.0,
-                        height: 1.05,
-                      ),
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: const [
-                        Text(
-                          "C",
-                          style: TextStyle(
-                            color: Color(0xFFE88226),
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        SizedBox(width: 1),
-                        Icon(
-                          Icons.settings,
-                          size: 14,
-                          color: Color(0xFFE88226),
-                        ),
-                        SizedBox(width: 1),
-                        Text(
-                          "NTR",
-                          style: TextStyle(
-                            color: Color(0xFFE88226),
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        SizedBox(width: 1),
-                        Icon(
-                          Icons.settings,
-                          size: 14,
-                          color: Color(0xFFE88226),
-                        ),
-                        SizedBox(width: 1),
-                        Text(
-                          "LS",
-                          style: TextStyle(
-                            color: Color(0xFFE88226),
-                            fontSize: 15.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      "PRIVATE LIMITED • SIMPLIFY YOUR INDUSTRY",
-                      style: TextStyle(
-                        color: Color(0xFF67B0D8),
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.9,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 8),
-
-                // 3. 3x2 BALANCED GRID
-                Expanded(
-                  child: GridView.count(
-                    crossAxisCount: 2,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisSpacing: isDesktop ? 12 : 9,
-                    mainAxisSpacing: isDesktop ? 10 : 9,
-                    childAspectRatio: isDesktop ? 3.0 : 1.40,
-                    children: [
-                      _buildLargeMatrixCard(
-                        icon: Icons.electrical_services_rounded,
-                        tag: "PANEL",
-                        title: "Control Panels",
-                        desc: "PLC Panels, VFD, APFC, MCC & PCC manufacturing.",
-                        color: const Color(0xFFE88226),
-                        isDesktop: isDesktop,
-                      ),
-                      _buildLargeMatrixCard(
-                        icon: Icons.speed_rounded,
-                        tag: "DRIVES",
-                        title: "AC & DC Drives",
-                        desc: "VFD drives setup, motor tuning & syncing.",
-                        color: const Color(0xFFF59E0B),
-                        isDesktop: isDesktop,
-                      ),
-                      _buildLargeMatrixCard(
-                        icon: Icons.phone_android_rounded,
-                        tag: "MOBILE",
-                        title: "Mobile Telemetry",
-                        desc: "Live PLC telemetry, alerts & mobile control.",
-                        color: const Color(0xFF38BDF8),
-                        isDesktop: isDesktop,
-                      ),
-                      _buildLargeMatrixCard(
-                        icon: Icons.laptop_chromebook_rounded,
-                        tag: "SOFTWARE",
-                        title: "Industrial Software",
-                        desc: "Dashboard, Alarms, Logging & reports.",
-                        color: const Color(0xFFA855F7),
-                        isDesktop: isDesktop,
-                      ),
-                      _buildLargeMatrixCard(
-                        icon: Icons.memory_rounded,
-                        tag: "AUTOMATION",
-                        title: "PLC Retrofitting",
-                        desc: "Machine logic modernizing & programming.",
-                        color: const Color(0xFF00E676),
-                        isDesktop: isDesktop,
-                      ),
-                      _buildLargeMatrixCard(
-                        icon: Icons.build_circle_outlined,
-                        tag: "SERVICE",
-                        title: "AMC Maintenance",
-                        desc: "Breakdown repair & monthly contracts.",
-                        color: const Color(0xFFF43F5E),
-                        isDesktop: isDesktop,
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                // 4. GOV BADGES
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildGovBadge(
-                        label: "GSTIN",
-                        val: "27BUZPS8168M1Z4",
-                        icon: Icons.verified_user_rounded,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _buildGovBadge(
-                        label: "UDYAM",
-                        val: "MH-33-0454689",
-                        icon: Icons.domain_verification_rounded,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 7),
-
-                // 5. CONTACT CONTAINER
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0B1C2A),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF1A3B54)),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.mail_outline_rounded, size: 12.5, color: Color(0xFFE88226)),
-                          SizedBox(width: 6),
-                          Text(
-                            "nextgencontrols@gmail.com",
-                            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
-                      const Divider(color: Color(0xFF16324A), height: 1),
-                      const SizedBox(height: 5),
-
-                      if (isDesktop)
-                        Row(
-                          children: [
-                            Expanded(child: _buildPhoneChip("+91 9892485539")),
-                            const SizedBox(width: 6),
-                            Expanded(child: _buildPhoneChip("+91 9921379012")),
-                            const SizedBox(width: 6),
-                            Expanded(child: _buildPhoneChip("+91 9987369614")),
-                            const SizedBox(width: 6),
-                            Expanded(child: _buildPhoneChip("+91 9767013933")),
-                          ],
-                        )
-                      else ...[
-                        Row(
-                          children: [
-                            Expanded(child: _buildPhoneChip("+91 9892485539")),
-                            const SizedBox(width: 6),
-                            Expanded(child: _buildPhoneChip("+91 9921379012")),
-                          ],
-                        ),
-                        const SizedBox(height: 5),
-                        Row(
-                          children: [
-                            Expanded(child: _buildPhoneChip("+91 9987369614")),
-                            const SizedBox(width: 6),
-                            Expanded(child: _buildPhoneChip("+91 9767013933")),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                // 6. CONTINUE BUTTON
-                Container(
-                  width: double.infinity,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(22),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFF7941D), Color(0xFFE88226)],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFFE88226).withOpacity(0.35),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const SignInScreen(),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.transparent,
-                      shadowColor: Colors.transparent,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          "Continue to Sign In",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.3,
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 17,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-              ],
-            ),
-          ),
+                )
+              : content,
         ),
       ),
     );
@@ -398,7 +479,7 @@ class WelcomeScreen extends StatelessWidget {
     required bool isDesktop,
   }) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 12 : 9, vertical: 7),
+      padding: EdgeInsets.symmetric(horizontal: isDesktop ? 12 : 9, vertical: isDesktop ? 10 : 7),
       decoration: BoxDecoration(
         color: const Color(0xFF0F2638).withOpacity(0.85),
         borderRadius: BorderRadius.circular(11),
@@ -532,9 +613,10 @@ class WelcomeScreen extends StatelessWidget {
     required String label,
     required String val,
     required IconData icon,
+    bool isDesktop = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4.5),
+      padding: EdgeInsets.symmetric(horizontal: 8, vertical: isDesktop ? 6.0 : 4.5),
       decoration: BoxDecoration(
         color: const Color(0xFF0E2538),
         borderRadius: BorderRadius.circular(7),
@@ -542,19 +624,19 @@ class WelcomeScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 13.5, color: const Color(0xFF00E676)),
-          const SizedBox(width: 5),
+          Icon(icon, size: isDesktop ? 15 : 13.5, color: const Color(0xFF00E676)),
+          const SizedBox(width: 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   label,
-                  style: const TextStyle(color: Color(0xFF67B0D8), fontSize: 7, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: const Color(0xFF67B0D8), fontSize: isDesktop ? 7.5 : 7, fontWeight: FontWeight.bold),
                 ),
                 Text(
                   val,
-                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700),
+                  style: TextStyle(color: Colors.white, fontSize: isDesktop ? 10 : 9, fontWeight: FontWeight.w700),
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
@@ -567,7 +649,7 @@ class WelcomeScreen extends StatelessWidget {
 
   static Widget _buildPhoneChip(String number) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3.5),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4.5),
       decoration: BoxDecoration(
         color: const Color(0xFF10283C),
         borderRadius: BorderRadius.circular(5),
@@ -582,7 +664,7 @@ class WelcomeScreen extends StatelessWidget {
             number,
             style: const TextStyle(
               color: Color(0xFFE2E8F0),
-              fontSize: 9,
+              fontSize: 9.5,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.2,
             ),
