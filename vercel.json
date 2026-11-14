@@ -1,4 +1,6 @@
 {
+  "buildCommand": "git clone https://github.com/flutter/flutter.git -b stable _flutter && export PATH=\"$PATH:$(pwd)/_flutter/bin\" && flutter config --enable-web && flutter build web --release",
+  "outputDirectory": "build/web",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
